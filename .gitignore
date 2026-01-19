@@ -1,0 +1,51 @@
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+coverage.xml
+htmlcov/
+
+## Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+## OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+## Secrets (never commit)
+.env
+.env.*
+
+## Jupyter
+.ipynb_checkpoints/
+
+## ML / experiment outputs
+wandb/
+runs/
+logs/
+checkpoints/
+outputs/
+artifacts/
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.onnx
+*.safetensors
+*.bin
+
+## Local caches
+.cache/
+cache/
+**/.cache/
