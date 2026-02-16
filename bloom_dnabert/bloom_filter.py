@@ -204,38 +204,40 @@ class MultiScaleBloomFilter:
         """
         Load known HBB pathogenic variants including sickle cell mutation.
         
-        The sickle cell mutation is at codon 6: GAG -> GTG (E6V)
-        This method populates the Bloom filters with k-mers covering this
-        and other known pathogenic variants in the HBB gene.
-        """
-        # HBB gene reference sequence (partial, around codon 6)
-        # Normal: ...CAC GTG GAC TAC CCT...
-        #         His Val Asp Tyr Pro
-        # Sickle: ...CAC GTG GTC TAC CCT... (GAG->GTG in codon 6)
-        #         His Val Val Tyr Pro
+        Mutations verified against NCBI ClinVar / NM_000518.5:
+        - E6V (HbS): c.20A>T, codon 7 GAG→GTG, position 19 (0-indexed)
+        - E6K (HbC): c.19G>A, codon 7 GAG→AAG, position 18 (0-indexed)
+        - E26K (HbE): c.79G>A, codon 27 GAG→AAG, position 78 (0-indexed)
         
-        # Known pathogenic variants in HBB gene
+        Normal codon 7 region:  ...CATCTGACTCCT GAG GAGAAGTCTGCC...
+        HbS mutant:             ...CATCTGACTCCT GTG GAGAAGTCTGCC...
+        HbC mutant:             ...CATCTGACTCCT AAG GAGAAGTCTGCC...
+        """
+        # Reference region around codon 7 (positions 6-29):
+        # CATCTGACTCCTGAGGAGAAGTCTGCC
+        #                  ^^^ codon 7 = GAG (Glu) at positions 18-20
+        
         pathogenic_sequences = [
-            # Sickle cell (HbS) - E6V mutation region
-            "CACGTGGTCTACCCTGAGGT",  # Mutant with GTG at codon 6
-            "GTGGTCTACCCT",
-            "CACGTGGTCTAC",
-            "GTGGTCTACCCTGAGG",
+            # Sickle cell (HbS) - E6V: GAG→GTG (pos 19: A→T)
+            # Mutant context: ...CCTGTGGAG... (GTG at codon 7)
+            "CATCTGACTCCTGTGGAGAAGTCTGCC",  # Full mutant context
+            "ACTCCTGTGGAG",   # Shorter context around mutation
+            "CCTGTG",         # Key mutant k-mer (k=6)
+            "CCTGTGGA",       # k=8
+            "CCTGTGGAGA",     # k=10
+            "TGACTCCTGTGGAGAA",  # Extended context
             
-            # Additional sickle cell k-mers
-            "GTGGTC",  # Key mutant k-mer (k=6)
-            "GTGGTCTA",  # k=8
-            "GTGGTCTACC",  # k=10
+            # HbC disease - E6K: GAG→AAG (pos 18: G→A)
+            # Mutant context: ...CCTAAGGAG... (AAG at codon 7)
+            "CATCTGACTCCTAAGGAGAAGTCTGCC",  # Full mutant context
+            "ACTCCTAAGGAG",   # Shorter context
+            "CCTAAG",         # Key mutant k-mer (k=6)
+            "CCTAAGGA",       # k=8
+            "CCTAAGGAGA",     # k=10
             
-            # HbC disease - E6K mutation
-            "CACGTGAAGTACCCTGAGGT",
-            "GTGAAGTAC",
-            
-            # Beta-thalassemia mutations (common ones)
-            # These are insertions/deletions that create novel k-mers
-            "CTGAGGAGAAGTCTGCCGTT",  # IVS-I-110 mutation region
-            
-            # Add more pathogenic variant k-mers as needed
+            # HbE disease - E26K: GAG→AAG (pos 78: G→A)
+            # In exon 1, codon 27
+            "GCCCTGGGCAAGTTGGTATCAAGGTTACAAG",  # HbE region (approximate)
         ]
         
         for seq in pathogenic_sequences:
@@ -244,6 +246,76 @@ class MultiScaleBloomFilter:
         print(f"Loaded pathogenic variants into Bloom filters:")
         for k in self.k_sizes:
             print(f"  k={k}: {self.pathogenic_kmer_count[k]} k-mers added")
+    
+    def get_positional_signal(self, sequence: str) -> np.ndarray:
+        """
+        Compute per-position Bloom filter activation signal.
+        
+        For each nucleotide position, computes the fraction of k-mers
+        overlapping that position that are found in the pathogenic Bloom filter.
+        This preserves spatial information about WHERE pathogenic patterns
+        are detected, unlike summary statistics that collapse position info.
+        
+        Args:
+            sequence: DNA sequence
+            
+        Returns:
+            numpy array of shape [seq_len, n_k_sizes] with activation scores
+            in [0, 1] for each position and k-mer scale
+        """
+        sequence = sequence.upper()
+        seq_len = len(sequence)
+        n_scales = len(self.k_sizes)
+        signal = np.zeros((seq_len, n_scales), dtype=np.float32)
+        
+        hits = self.check_sequence(sequence)
+        
+        for k_idx, k in enumerate(self.k_sizes):
+            hit_list = hits[k]
+            hit_counts = np.zeros(seq_len, dtype=np.float32)
+            overlap_counts = np.zeros(seq_len, dtype=np.float32)
+            
+            for i in range(len(hit_list)):
+                end_pos = min(i + k, seq_len)
+                overlap_counts[i:end_pos] += 1.0
+                if hit_list[i]:
+                    hit_counts[i:end_pos] += 1.0
+            
+            # Activation = fraction of overlapping k-mers that are hits
+            mask = overlap_counts > 0
+            signal[mask, k_idx] = hit_counts[mask] / overlap_counts[mask]
+        
+        return signal
+    
+    def get_token_aligned_signal(
+        self,
+        sequence: str,
+        token_spans: List[Tuple[int, int]]
+    ) -> np.ndarray:
+        """
+        Compute Bloom activation signal aligned to DNABERT token positions.
+        
+        Aggregates per-nucleotide Bloom signals to match the tokenization
+        used by DNABERT, enabling cross-modal position-level alignment.
+        
+        Args:
+            sequence: DNA sequence
+            token_spans: List of (start, end) nucleotide positions per token
+            
+        Returns:
+            numpy array of shape [num_tokens, n_k_sizes]
+        """
+        nuc_signal = self.get_positional_signal(sequence)
+        n_tokens = len(token_spans)
+        n_scales = len(self.k_sizes)
+        token_signal = np.zeros((n_tokens, n_scales), dtype=np.float32)
+        
+        for t_idx, (start, end) in enumerate(token_spans):
+            if end > start and start < len(nuc_signal):
+                actual_end = min(end, len(nuc_signal))
+                token_signal[t_idx] = nuc_signal[start:actual_end].mean(axis=0)
+        
+        return token_signal
     
     def get_statistics(self) -> Dict[str, int]:
         """

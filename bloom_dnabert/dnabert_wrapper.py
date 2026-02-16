@@ -350,3 +350,95 @@ class DNABERTWrapper:
             'embedding': embedding,
             'attention': attention_matrix
         }
+    
+    def get_token_level_outputs(
+        self,
+        sequence: str
+    ) -> Tuple[np.ndarray, List[Tuple[int, int]], List[str]]:
+        """
+        Get per-token hidden states with token-to-nucleotide position mapping.
+        
+        Unlike get_embedding() which pools all tokens into a single vector,
+        this method preserves per-token spatial information needed for
+        position-aware cross-modal attention with Bloom filter signals.
+        
+        Args:
+            sequence: DNA sequence
+            
+        Returns:
+            Tuple of:
+            - hidden_states: [num_tokens, hidden_size] per-token representations
+            - token_spans: List of (start, end) nucleotide positions per token
+            - tokens: List of token strings
+        """
+        sequence = sequence.upper()
+        
+        # Try to get offset mapping from the tokenizer for accurate alignment
+        try:
+            inputs = self.tokenizer(
+                sequence, return_tensors="pt", return_offsets_mapping=True
+            )
+            offset_mapping = inputs.pop("offset_mapping")[0].tolist()
+            has_offsets = True
+        except Exception:
+            inputs = self.tokenizer(sequence, return_tensors="pt")
+            offset_mapping = None
+            has_offsets = False
+        
+        input_ids = inputs["input_ids"].to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(input_ids)
+            if hasattr(outputs, 'last_hidden_state'):
+                hidden_states = outputs.last_hidden_state.squeeze(0)
+            else:
+                hidden_states = outputs[0].squeeze(0)
+        
+        tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+        hidden_np = hidden_states.cpu().numpy()
+        
+        if has_offsets and offset_mapping is not None:
+            token_spans = [(start, end) for start, end in offset_mapping]
+        else:
+            # Fallback heuristic when offset mapping is unavailable
+            token_spans = []
+            current_pos = 0
+            for token in tokens:
+                if token.startswith('[') or token.startswith('<'):
+                    token_spans.append((current_pos, current_pos))
+                    continue
+                
+                token_text = token.replace('\u2581', '').replace('##', '')
+                token_len = max(len(token_text), 1)
+                end_pos = min(current_pos + token_len, len(sequence))
+                token_spans.append((current_pos, end_pos))
+                current_pos = end_pos
+        
+        return hidden_np, token_spans, tokens
+    
+    def get_token_hidden_states_tensor(
+        self,
+        sequence: str
+    ) -> torch.Tensor:
+        """
+        Get per-token hidden states as a PyTorch tensor (stays on device).
+        
+        Args:
+            sequence: DNA sequence
+            
+        Returns:
+            Tensor of shape [1, num_tokens, hidden_size] on model device
+        """
+        sequence = sequence.upper()
+        
+        inputs = self.tokenizer(sequence, return_tensors="pt")
+        input_ids = inputs["input_ids"].to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(input_ids)
+            if hasattr(outputs, 'last_hidden_state'):
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs[0]
+        
+        return hidden_states
