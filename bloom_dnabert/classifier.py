@@ -456,8 +456,13 @@ class HybridClassifierPipeline:
         
         # Calculate metrics
         acc = accuracy_score(labels, preds)
-        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
-        auc = roc_auc_score(labels, probs)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            labels, preds, average='binary', zero_division=0.0
+        )
+        try:
+            auc = roc_auc_score(labels, probs)
+        except ValueError:
+            auc = 0.0  # Only one class present in test set
         
         metrics = {
             'accuracy': acc,
@@ -968,9 +973,12 @@ class BloomGuidedPipeline:
 
         acc = accuracy_score(labels, preds)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            labels, preds, average='binary'
+            labels, preds, average='binary', zero_division=0.0
         )
-        auc = roc_auc_score(labels, probs)
+        try:
+            auc = roc_auc_score(labels, probs)
+        except ValueError:
+            auc = 0.0  # Only one class present in test set
 
         return {
             'accuracy': acc,

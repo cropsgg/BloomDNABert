@@ -8,12 +8,17 @@ Supports two architectures:
 1. Baseline: Simple concatenation + MLP (HybridClassifier)
 2. BGPCA: Bloom-Guided Positional Cross-Attention (novel)
 """
+# Disable Gradio analytics to avoid outbound HTTPS calls (e.g. checkip.amazonaws.com)
+# that can timeout when offline or behind a firewall
+import os
+os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
 import gradio as gr
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
+import socket
 
 from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper, HybridClassifier, AttentionVisualizer
 from bloom_dnabert.classifier import HybridClassifierPipeline, BloomGuidedPipeline
@@ -136,6 +141,11 @@ class VariantAnalysisDashboard:
         - Simple concatenation + 2-layer MLP
         """
 
+        last_train_loss = history['train_loss'][-1] if history['train_loss'] else 0.0
+        last_train_acc = history['train_acc'][-1] if history['train_acc'] else 0.0
+        last_val_loss = history['val_loss'][-1] if history['val_loss'] else 0.0
+        last_val_acc = history['val_acc'][-1] if history['val_acc'] else 0.0
+
         results = f"""
         ### Training Complete! ({model_name})
 
@@ -151,10 +161,13 @@ class VariantAnalysisDashboard:
         **Data Split:** 60% train / 20% val / 20% test (stratified)
 
         **Training History:**
-        - Final Training Loss: {history['train_loss'][-1]:.4f}
-        - Final Training Accuracy: {history['train_acc'][-1]:.3f}
-        - Final Validation Loss: {history['val_loss'][-1]:.4f}
-        - Final Validation Accuracy: {history['val_acc'][-1]:.3f}
+        - Final Training Loss: {last_train_loss:.4f}
+        - Final Training Accuracy: {last_train_acc:.4f}
+        - Final Validation Loss: {last_val_loss:.4f}
+        - Final Validation Accuracy: {last_val_acc:.4f}
+
+        ---
+        **You can now use the "Analyze Sequence" tab** to get pathogenic/benign predictions and uncertainty for any DNA sequence.
         """
 
         return results
@@ -471,6 +484,18 @@ class VariantAnalysisDashboard:
         interface.launch(**kwargs)
 
 
+def _find_free_port(start: int = 7860, end: int = 7870) -> int:
+    """Find first available port in [start, end)."""
+    for port in range(start, end):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", port))
+                return port
+        except OSError:
+            continue
+    return start  # fallback
+
+
 def main():
     """Main entry point for the dashboard."""
     print("\n" + "=" * 60)
@@ -478,11 +503,15 @@ def main():
     print("with Bloom-Guided Positional Cross-Attention (BGPCA)")
     print("=" * 60 + "\n")
 
+    port = _find_free_port()
+    if port != 7860:
+        print(f"Port 7860 in use; using port {port} instead.\n")
+
     dashboard = VariantAnalysisDashboard()
     dashboard.launch(
         share=False,
         server_name="0.0.0.0",
-        server_port=7860
+        server_port=port,
     )
 
 

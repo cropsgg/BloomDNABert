@@ -138,8 +138,9 @@ class AttentionVisualizer:
         Returns:
             Plotly figure object
         """
-        # Get nucleotide importance from attention
+        # Get nucleotide importance from attention (ensure 1D for Plotly)
         importance, _ = self.dnabert_wrapper.map_attention_to_sequence(sequence, layer=layer)
+        importance = np.atleast_1d(np.asarray(importance)).ravel()
         
         # Get Bloom hits
         bloom_hits = self.bloom_filter.check_sequence(sequence)[k_size]
@@ -352,8 +353,9 @@ class AttentionVisualizer:
         Returns:
             Plotly figure object
         """
-        # Get data
+        # Get data (ensure 1D for Plotly)
         importance, _ = self.dnabert_wrapper.map_attention_to_sequence(sequence)
+        importance = np.atleast_1d(np.asarray(importance)).ravel()
         bloom_hits = self.bloom_filter.check_sequence(sequence)[bloom_k]
         
         # Create subplots
@@ -451,12 +453,12 @@ class AttentionVisualizer:
             row=3, col=1
         )
         
-        # 6. Feature distribution
+        # 6. Feature distribution (ensure Python floats for Plotly)
         feature_names = ['k6', 'k8', 'k10']
         feature_values = [
-            bloom_features['hit_ratio_k6'],
-            bloom_features['hit_ratio_k8'],
-            bloom_features['hit_ratio_k10']
+            float(bloom_features['hit_ratio_k6']),
+            float(bloom_features['hit_ratio_k8']),
+            float(bloom_features['hit_ratio_k10'])
         ]
         
         fig.add_trace(

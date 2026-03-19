@@ -719,15 +719,19 @@ class ClinVarDataLoader:
         self,
         val_split: float = 0.2,
         test_split: float = 0.2,
-        random_state: int = 42
+        random_state: int = 42,
+        use_cache: bool = True
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Get stratified train/val/test datasets with no leakage.
 
+        Args:
+            use_cache: If True, use cached variants when available (faster).
+
         Returns:
             Tuple of (train_df, val_df, test_df)
         """
-        df = self.fetch_hbb_variants(force_download=True)
+        df = self.fetch_hbb_variants(force_download=not use_cache)
 
         # Separate labeled data from VUS
         df_labeled = df[df['label'] != -1].copy()

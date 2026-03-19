@@ -9,6 +9,7 @@ import torch
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from transformers import AutoTokenizer, AutoModel
+import logging
 import warnings
 
 
@@ -41,17 +42,25 @@ class DNABERTWrapper:
         
         print(f"Loading DNABERT-2 model on {self.device}...")
         
-        # Load tokenizer and model
+        # Load tokenizer and model (suppress known-harmless warnings and log messages)
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=True
         )
-        
-        self.model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            output_attentions=True  # Enable attention output
-        ).to(self.device)
+        # Suppress "Some weights..." and "You should probably TRAIN..." (transformers uses logging)
+        tlog = logging.getLogger("transformers")
+        old_level = tlog.level
+        tlog.setLevel(logging.ERROR)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*Triton.*")
+                self.model = AutoModel.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    output_attentions=True  # Enable attention output
+                ).to(self.device)
+        finally:
+            tlog.setLevel(old_level)
         
         self.model.eval()
         
@@ -247,6 +256,8 @@ class DNABERTWrapper:
         
         # Normalize to [0, 1]
         importance = (importance - importance.min()) / (importance.max() - importance.min() + 1e-10)
+        # Ensure 1D so zip(tokens, importance) and Plotly never get a 0-d scalar
+        importance = np.atleast_1d(importance.ravel())
         
         return importance, tokens
     
