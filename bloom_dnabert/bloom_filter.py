@@ -6,7 +6,8 @@ to enable fast O(1) lookup of known pathogenic k-mers from the HBB gene region.
 """
 
 import numpy as np
-from typing import List, Dict, Tuple
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional, Union, Sequence
 from pybloom_live import BloomFilter
 
 
@@ -18,22 +19,20 @@ class MultiScaleBloomFilter:
     sequence granularities. This provides robust detection of known pathogenic
     variants including the sickle cell mutation.
     """
-    
-    def __init__(self, capacity: int = 100000, error_rate: float = 0.001):
-        """
-        Initialize multi-scale Bloom filters.
-        
-        Args:
-            capacity: Expected number of k-mers per filter
-            error_rate: False positive rate (default 0.1%)
-        """
-        self.k_sizes = [6, 8, 10]
+
+    def __init__(
+        self,
+        capacity: int = 100000,
+        error_rate: float = 0.001,
+        k_sizes: Optional[Sequence[int]] = None,
+    ):
+        self.k_sizes = list(k_sizes) if k_sizes is not None else [6, 8, 10]
         self.filters = {
             k: BloomFilter(capacity=capacity, error_rate=error_rate)
             for k in self.k_sizes
         }
         self.pathogenic_kmer_count = {k: 0 for k in self.k_sizes}
-        
+
     def add_pathogenic_kmers(self, sequence: str, k: int = None):
         """
         Add all k-mers from a pathogenic sequence to the Bloom filters.
@@ -200,52 +199,31 @@ class MultiScaleBloomFilter:
                 
         return hits
     
-    def load_hbb_pathogenic_variants(self):
-        """
-        Load known HBB pathogenic variants including sickle cell mutation.
-        
-        Mutations verified against NCBI ClinVar / NM_000518.5:
-        - E6V (HbS): c.20A>T, codon 7 GAG→GTG, position 19 (0-indexed)
-        - E6K (HbC): c.19G>A, codon 7 GAG→AAG, position 18 (0-indexed)
-        - E26K (HbE): c.79G>A, codon 27 GAG→AAG, position 78 (0-indexed)
-        
-        Normal codon 7 region:  ...CATCTGACTCCT GAG GAGAAGTCTGCC...
-        HbS mutant:             ...CATCTGACTCCT GTG GAGAAGTCTGCC...
-        HbC mutant:             ...CATCTGACTCCT AAG GAGAAGTCTGCC...
-        """
-        # Reference region around codon 7 (positions 6-29):
-        # CATCTGACTCCTGAGGAGAAGTCTGCC
-        #                  ^^^ codon 7 = GAG (Glu) at positions 18-20
-        
-        pathogenic_sequences = [
-            # Sickle cell (HbS) - E6V: GAG→GTG (pos 19: A→T)
-            # Mutant context: ...CCTGTGGAG... (GTG at codon 7)
-            "CATCTGACTCCTGTGGAGAAGTCTGCC",  # Full mutant context
-            "ACTCCTGTGGAG",   # Shorter context around mutation
-            "CCTGTG",         # Key mutant k-mer (k=6)
-            "CCTGTGGA",       # k=8
-            "CCTGTGGAGA",     # k=10
-            "TGACTCCTGTGGAGAA",  # Extended context
-            
-            # HbC disease - E6K: GAG→AAG (pos 18: G→A)
-            # Mutant context: ...CCTAAGGAG... (AAG at codon 7)
-            "CATCTGACTCCTAAGGAGAAGTCTGCC",  # Full mutant context
-            "ACTCCTAAGGAG",   # Shorter context
-            "CCTAAG",         # Key mutant k-mer (k=6)
-            "CCTAAGGA",       # k=8
-            "CCTAAGGAGA",     # k=10
-            
-            # HbE disease - E26K: GAG→AAG (pos 78: G→A)
-            # In exon 1, codon 27
-            "GCCCTGGGCAAGTTGGTATCAAGGTTACAAG",  # HbE region (approximate)
-        ]
-        
+    def load_pathogenic_seeds(self, seeds_path: Union[str, Path]) -> None:
+        seeds_path = Path(seeds_path)
+        text = seeds_path.read_text(encoding="utf-8")
+        pathogenic_sequences: List[str] = []
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            pathogenic_sequences.append(s)
         for seq in pathogenic_sequences:
             self.add_pathogenic_kmers(seq)
-        
-        print(f"Loaded pathogenic variants into Bloom filters:")
+        print("Loaded pathogenic seeds into Bloom filters:")
         for k in self.k_sizes:
             print(f"  k={k}: {self.pathogenic_kmer_count[k]} k-mers added")
+
+    def load_hbb_pathogenic_variants(
+        self,
+        seeds_path: Optional[Union[str, Path]] = None,
+    ):
+        p = (
+            Path(seeds_path)
+            if seeds_path is not None
+            else Path(__file__).resolve().parent / "data" / "pathogenic_kmer_seeds.txt"
+        )
+        self.load_pathogenic_seeds(p)
     
     def get_positional_signal(self, sequence: str) -> np.ndarray:
         """

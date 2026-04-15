@@ -1,29 +1,23 @@
-"""
-Bloom-Enhanced DNABERT for Sickle Cell Variant Classification
-
-A hybrid system combining Bloom filters for fast pathogenic k-mer detection
-with DNABERT-2 embeddings for variant classification.
-
-Includes the novel Bloom-Guided Positional Cross-Attention (BGPCA)
-architecture that bridges probabilistic data structures with neural
-attention mechanisms for position-aware cross-modal fusion.
-"""
-
-from .bloom_filter import MultiScaleBloomFilter
-from .dnabert_wrapper import DNABERTWrapper
-from .classifier import HybridClassifier
-from .visualizer import AttentionVisualizer
-from .bloom_attention_bridge import (
-    BloomGuidedClassifier,
-    PositionalBloomEncoder,
-    BloomGuidedCrossAttention,
-    MutationAwarePooling,
-    GatedCrossModalFusion,
-)
+import importlib
+from typing import Any, List
 
 __version__ = "2.0.0"
 
-__all__ = [
+_LAZY = {
+    "MultiScaleBloomFilter": (".bloom_filter", "MultiScaleBloomFilter"),
+    "DNABERTWrapper": (".dnabert_wrapper", "DNABERTWrapper"),
+    "HybridClassifier": (".classifier", "HybridClassifier"),
+    "AttentionVisualizer": (".visualizer", "AttentionVisualizer"),
+    "load_settings": (".settings", "load_settings"),
+    "BloomGuidedClassifier": (".bloom_attention_bridge", "BloomGuidedClassifier"),
+    "PositionalBloomEncoder": (".bloom_attention_bridge", "PositionalBloomEncoder"),
+    "BloomGuidedCrossAttention": (".bloom_attention_bridge", "BloomGuidedCrossAttention"),
+    "MutationAwarePooling": (".bloom_attention_bridge", "MutationAwarePooling"),
+    "GatedCrossModalFusion": (".bloom_attention_bridge", "GatedCrossModalFusion"),
+}
+
+__all__: List[str] = [
+    "load_settings",
     "MultiScaleBloomFilter",
     "DNABERTWrapper",
     "HybridClassifier",
@@ -34,3 +28,15 @@ __all__ = [
     "MutationAwarePooling",
     "GatedCrossModalFusion",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY:
+        mod_path, attr = _LAZY[name]
+        mod = importlib.import_module(mod_path, __name__)
+        return getattr(mod, attr)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> List[str]:
+    return sorted(set(globals()) | set(__all__))

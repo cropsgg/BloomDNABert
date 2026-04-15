@@ -24,15 +24,14 @@ class DNABERTWrapper:
     - Providing interpretable attention maps
     """
     
-    def __init__(self, model_name: str = "zhihan1996/DNABERT-2-117M", device: str = None):
-        """
-        Initialize DNABERT wrapper.
-        
-        Args:
-            model_name: HuggingFace model name/path
-            device: Device to run model on ('cuda', 'cpu', or None for auto)
-        """
+    def __init__(
+        self,
+        model_name: str = "zhihan1996/DNABERT-2-117M",
+        device: str = None,
+        tokenizer_max_length: int = 512,
+    ):
         self.model_name = model_name
+        self.tokenizer_max_length = tokenizer_max_length
         
         # Determine device
         if device is None:
@@ -64,10 +63,20 @@ class DNABERTWrapper:
         
         self.model.eval()
         
-        # Model configuration
-        self.hidden_size = 768  # DNABERT-2-117M hidden size
-        self.num_layers = 12    # Number of transformer layers
-        self.num_heads = 12     # Number of attention heads per layer
+        cfg = self.model.config
+        self.hidden_size = int(
+            getattr(cfg, "hidden_size", getattr(cfg, "d_model", 768))
+        )
+        self.num_layers = int(
+            getattr(cfg, "num_hidden_layers", getattr(cfg, "n_layer", 12))
+        )
+        self.num_heads = int(
+            getattr(
+                cfg,
+                "num_attention_heads",
+                getattr(cfg, "n_head", 12),
+            )
+        )
         
         print(f"[OK] DNABERT-2 model loaded successfully")
         print(f"  Hidden size: {self.hidden_size}")
@@ -426,7 +435,81 @@ class DNABERTWrapper:
                 current_pos = end_pos
         
         return hidden_np, token_spans, tokens
-    
+
+    def encode_mean_pool_batch(
+        self,
+        sequences: List[str],
+        batch_size: int,
+        pool_method: str = "mean",
+    ) -> np.ndarray:
+        sequences = [s.upper() for s in sequences]
+        chunks: List[np.ndarray] = []
+        for i in range(0, len(sequences), batch_size):
+            batch = sequences[i : i + batch_size]
+            enc = self.tokenizer(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.tokenizer_max_length,
+            )
+            input_ids = enc["input_ids"].to(self.device)
+            attention_mask = enc["attention_mask"].to(self.device)
+            with torch.no_grad():
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                h = outputs.last_hidden_state
+            for b in range(h.size(0)):
+                mask = attention_mask[b].bool()
+                hs = h[b][mask]
+                if pool_method == "mean":
+                    emb = hs.mean(dim=0).cpu().numpy()
+                elif pool_method == "max":
+                    emb = hs.max(dim=0)[0].cpu().numpy()
+                elif pool_method == "cls":
+                    emb = h[b, 0].cpu().numpy()
+                else:
+                    emb = hs.mean(dim=0).cpu().numpy()
+                chunks.append(emb)
+        return np.stack(chunks, axis=0)
+
+    def get_token_level_outputs_batch(
+        self,
+        sequences: List[str],
+        batch_size: int,
+    ) -> List[Tuple[np.ndarray, List[Tuple[int, int]], List[str]]]:
+        sequences = [s.upper() for s in sequences]
+        all_out: List[Tuple[np.ndarray, List[Tuple[int, int]], List[str]]] = []
+        for i in range(0, len(sequences), batch_size):
+            batch = sequences[i : i + batch_size]
+            enc = self.tokenizer(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.tokenizer_max_length,
+                return_offsets_mapping=True,
+            )
+            offset_mapping = enc.pop("offset_mapping")
+            input_ids = enc["input_ids"].to(self.device)
+            attention_mask = enc["attention_mask"].to(self.device)
+            with torch.no_grad():
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                hidden = outputs.last_hidden_state
+            for bidx in range(hidden.size(0)):
+                spans: List[Tuple[int, int]] = []
+                rows: List[np.ndarray] = []
+                toks: List[str] = []
+                for t in range(input_ids.size(1)):
+                    if attention_mask[bidx, t].item() == 0:
+                        continue
+                    om = offset_mapping[bidx][t]
+                    spans.append((int(om[0]), int(om[1])))
+                    rows.append(hidden[bidx, t].cpu().numpy())
+                    tid = int(input_ids[bidx, t].item())
+                    toks.append(self.tokenizer.convert_ids_to_tokens(tid))
+                all_out.append((np.stack(rows, axis=0), spans, toks))
+        return all_out
+
     def get_token_hidden_states_tensor(
         self,
         sequence: str
