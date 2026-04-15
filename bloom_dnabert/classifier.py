@@ -20,8 +20,11 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc
 import pickle
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
+from torch.utils.data import TensorDataset, DataLoader
 
 from .bloom_attention_bridge import BloomGuidedClassifier
+from .feature_cache import FeatureCache
+from .settings import AppSettings, settings_fingerprint_digest
 
 
 class HybridClassifier(nn.Module):
@@ -128,24 +131,28 @@ class HybridClassifierPipeline:
         self,
         bloom_filter=None,
         dnabert_wrapper=None,
-        device: str = None
+        device: str = None,
+        settings: Optional[AppSettings] = None,
     ):
-        """
-        Initialize pipeline.
-        
-        Args:
-            bloom_filter: MultiScaleBloomFilter instance
-            dnabert_wrapper: DNABERTWrapper instance
-            device: Device for PyTorch
-        """
         self.bloom_filter = bloom_filter
         self.dnabert_wrapper = dnabert_wrapper
-        
+        self.settings = settings
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = torch.device(device)
-        
+        self.encode_batch_size = (
+            settings.training.encode_batch_size if settings else 8
+        )
+        self._feature_cache = None
+        if settings and settings.data.feature_cache_dir:
+            self._feature_cache = FeatureCache(
+                settings.data.feature_cache_dir,
+                settings_fingerprint_digest(settings),
+            )
+        self.max_sequence_length = (
+            settings.inference.max_sequence_length if settings else 5000
+        )
         self.model = None
         self.trained = False
         
@@ -168,33 +175,36 @@ class HybridClassifierPipeline:
         return bloom_features, dnabert_embedding
     
     def prepare_dataset(self, sequences: list, labels: list) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Prepare dataset for training/evaluation.
-        
-        Args:
-            sequences: List of DNA sequences
-            labels: List of labels (0=benign, 1=pathogenic)
-            
-        Returns:
-            Tuple of (bloom_features, dnabert_embeddings, labels) as tensors
-        """
-        bloom_features_list = []
-        dnabert_embeddings_list = []
-        
-        print(f"Extracting features from {len(sequences)} sequences...")
+        n = len(sequences)
+        print(f"Extracting features from {n} sequences...")
+        bloom_feats: List[Optional[np.ndarray]] = [None] * n
+        dna_feats: List[Optional[np.ndarray]] = [None] * n
+        missing: List[int] = []
         for i, seq in enumerate(sequences):
-            if i % 50 == 0:
-                print(f"  Progress: {i}/{len(sequences)}")
-            
-            bloom_feat, dnabert_emb = self.extract_features(seq)
-            bloom_features_list.append(bloom_feat)
-            dnabert_embeddings_list.append(dnabert_emb)
-        
-        # Convert to tensors
-        bloom_features = torch.tensor(np.array(bloom_features_list), dtype=torch.float32)
-        dnabert_embeddings = torch.tensor(np.array(dnabert_embeddings_list), dtype=torch.float32)
+            if self._feature_cache:
+                got = self._feature_cache.load_baseline(seq)
+                if got is not None:
+                    bloom_feats[i] = got[0]
+                    dna_feats[i] = got[1]
+                    continue
+            missing.append(i)
+        if missing:
+            ebs = self.encode_batch_size
+            for j in range(0, len(missing), ebs):
+                chunk_idx = missing[j : j + ebs]
+                batch_seqs = [sequences[k] for k in chunk_idx]
+                d_emb = self.dnabert_wrapper.encode_mean_pool_batch(
+                    batch_seqs, batch_size=len(batch_seqs)
+                )
+                for u, k in enumerate(chunk_idx):
+                    bf = self.bloom_filter.get_feature_vector(batch_seqs[u])
+                    bloom_feats[k] = bf
+                    dna_feats[k] = d_emb[u]
+                    if self._feature_cache:
+                        self._feature_cache.save_baseline(batch_seqs[u], bf, d_emb[u])
+        bloom_features = torch.tensor(np.stack(bloom_feats, axis=0), dtype=torch.float32)
+        dnabert_embeddings = torch.tensor(np.stack(dna_feats, axis=0), dtype=torch.float32)
         labels_tensor = torch.tensor(labels, dtype=torch.float32)
-        
         return bloom_features, dnabert_embeddings, labels_tensor
     
     def train(
@@ -208,7 +218,10 @@ class HybridClassifierPipeline:
         learning_rate: float = 0.001,
         weight_decay: float = 0.01,
         patience: int = 10,
-        max_grad_norm: float = 1.0
+        max_grad_norm: float = 1.0,
+        num_workers: Optional[int] = None,
+        pin_memory: Optional[bool] = None,
+        use_amp: Optional[bool] = None,
     ) -> Dict[str, list]:
         """
         Train the hybrid classifier with early stopping and gradient clipping.
@@ -266,13 +279,23 @@ class HybridClassifierPipeline:
         }
         
         n_samples = len(train_sequences)
-        n_batches = (n_samples + batch_size - 1) // batch_size
-        
-        # Early stopping state
+        tw = self.settings.training if self.settings else None
+        nw = num_workers if num_workers is not None else (tw.num_workers if tw else 0)
+        pm = pin_memory if pin_memory is not None else (tw.pin_memory if tw else False)
+        pm = pm and self.device.type == "cuda"
+        do_amp = use_amp if use_amp is not None else (tw.use_amp if tw else False)
+        do_amp = do_amp and self.device.type == "cuda"
+        scaler = torch.amp.GradScaler("cuda", enabled=do_amp)
+        train_loader = DataLoader(
+            TensorDataset(train_bloom, train_dnabert, train_labels_t),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=nw,
+            pin_memory=pm,
+        )
         best_val_loss = float('inf')
         best_model_state = None
         patience_counter = 0
-        
         print(f"\nTraining settings:")
         print(f"  Samples: {n_samples}")
         print(f"  Epochs: {epochs}")
@@ -281,33 +304,29 @@ class HybridClassifierPipeline:
         print(f"  Class weight (pos): {pos_weight.item():.3f}")
         print(f"  Gradient clipping: {max_grad_norm}")
         print(f"  Early stopping patience: {patience}")
+        print(f"  DataLoader workers: {nw}")
+        print(f"  AMP: {do_amp}")
         print(f"  Device: {self.device}")
-        
         for epoch in range(epochs):
             self.model.train()
             epoch_loss = 0.0
             epoch_correct = 0
-            
-            indices = torch.randperm(n_samples)
-            
-            for i in range(n_batches):
-                start_idx = i * batch_size
-                end_idx = min(start_idx + batch_size, n_samples)
-                batch_indices = indices[start_idx:end_idx]
-                
-                batch_bloom = train_bloom[batch_indices].to(self.device)
-                batch_dnabert = train_dnabert[batch_indices].to(self.device)
-                batch_labels = train_labels_t[batch_indices].to(self.device)
-                
-                optimizer.zero_grad()
-                outputs = self.model(batch_dnabert, batch_bloom).squeeze()
-                loss = criterion(outputs, batch_labels)
-                
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
-                optimizer.step()
-                
-                epoch_loss += loss.item() * len(batch_indices)
+            for batch_bloom, batch_dnabert, batch_labels in train_loader:
+                batch_bloom = batch_bloom.to(self.device, non_blocking=pm)
+                batch_dnabert = batch_dnabert.to(self.device, non_blocking=pm)
+                batch_labels = batch_labels.to(self.device, non_blocking=pm)
+                optimizer.zero_grad(set_to_none=True)
+                with torch.amp.autocast("cuda", enabled=do_amp):
+                    outputs = self.model(batch_dnabert, batch_bloom).squeeze()
+                    loss = criterion(outputs, batch_labels)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), max_norm=max_grad_norm
+                )
+                scaler.step(optimizer)
+                scaler.update()
+                epoch_loss += loss.item() * len(batch_labels)
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 epoch_correct += (preds == batch_labels).sum().item()
             
@@ -380,20 +399,17 @@ class HybridClassifierPipeline:
             acc = (preds == labels).float().mean().item()
         
         return loss, acc
-    
-    MAX_SEQUENCE_LENGTH = 5000
 
     def _validate_sequence(self, sequence: str) -> str:
-        """Validate and sanitize a DNA sequence."""
         if not sequence or not isinstance(sequence, str):
             raise ValueError("Sequence must be a non-empty string")
         sequence = sequence.upper().strip()
         if len(sequence) < 10:
             raise ValueError(f"Sequence too short ({len(sequence)} bp). Minimum is 10.")
-        if len(sequence) > self.MAX_SEQUENCE_LENGTH:
+        if len(sequence) > self.max_sequence_length:
             raise ValueError(
                 f"Sequence too long ({len(sequence)} bp). "
-                f"Maximum is {self.MAX_SEQUENCE_LENGTH}."
+                f"Maximum is {self.max_sequence_length}."
             )
         invalid = set(sequence) - set('ATCGN')
         if invalid:
@@ -536,21 +552,38 @@ class BloomGuidedPipeline:
         d_bloom: int = 64,
         n_cross_attn_layers: int = 2,
         n_heads: int = 4,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        settings: Optional[AppSettings] = None,
     ):
         self.bloom_filter = bloom_filter
         self.dnabert_wrapper = dnabert_wrapper
-        self.max_tokens = max_tokens
-        self.d_bloom = d_bloom
-        self.n_cross_attn_layers = n_cross_attn_layers
-        self.n_heads = n_heads
-        self.dropout = dropout
-
+        self.settings = settings
+        tw = settings.training if settings else None
+        bg = settings.bgpca if settings else None
+        self.max_tokens = tw.max_tokens if tw else max_tokens
+        self.d_bloom = bg.d_bloom if bg else d_bloom
+        self.n_cross_attn_layers = (
+            bg.n_cross_attn_layers if bg else n_cross_attn_layers
+        )
+        self.n_heads = bg.n_heads if bg else n_heads
+        self.dropout = bg.dropout if bg else dropout
+        self.encode_batch_size = tw.encode_batch_size if tw else 8
+        self._feature_cache = None
+        if settings and settings.data.feature_cache_dir:
+            self._feature_cache = FeatureCache(
+                settings.data.feature_cache_dir,
+                settings_fingerprint_digest(settings),
+            )
+        self.max_sequence_length = (
+            settings.inference.max_sequence_length if settings else 5000
+        )
+        self.mc_dropout_samples = (
+            settings.inference.mc_dropout_samples if settings else 20
+        )
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = torch.device(device)
-
         self.model = None
         self.trained = False
 
@@ -592,38 +625,45 @@ class BloomGuidedPipeline:
         sequences: list,
         labels: list
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Prepare dataset with position-aware features.
-
-        Returns:
-            hidden_states:  [N, max_tokens, 768]
-            bloom_signals:  [N, max_tokens, 3]
-            bloom_summaries: [N, 18]
-            labels:         [N]
-        """
-        all_hidden = []
-        all_bloom_signal = []
-        all_bloom_summary = []
-
-        print(f"Extracting positional features from {len(sequences)} sequences...")
+        n = len(sequences)
+        mt = self.max_tokens
+        print(f"Extracting positional features from {n} sequences...")
+        all_hidden: List[Optional[np.ndarray]] = [None] * n
+        all_bloom_signal: List[Optional[np.ndarray]] = [None] * n
+        all_bloom_summary: List[Optional[np.ndarray]] = [None] * n
+        missing: List[int] = []
         for i, seq in enumerate(sequences):
-            if i % 50 == 0:
-                print(f"  Progress: {i}/{len(sequences)}")
-
-            hidden, bloom_sig, bloom_sum = self.extract_positional_features(seq)
-
-            hidden = self._pad_or_truncate(hidden, self.max_tokens)
-            bloom_sig = self._pad_or_truncate(bloom_sig, self.max_tokens)
-
-            all_hidden.append(hidden)
-            all_bloom_signal.append(bloom_sig)
-            all_bloom_summary.append(bloom_sum)
-
-        hidden_t = torch.tensor(np.array(all_hidden), dtype=torch.float32)
-        bloom_sig_t = torch.tensor(np.array(all_bloom_signal), dtype=torch.float32)
-        bloom_sum_t = torch.tensor(np.array(all_bloom_summary), dtype=torch.float32)
+            if self._feature_cache:
+                got = self._feature_cache.load_bgpca(seq, mt)
+                if got is not None:
+                    all_hidden[i] = got[0]
+                    all_bloom_signal[i] = got[1]
+                    all_bloom_summary[i] = got[2]
+                    continue
+            missing.append(i)
+        ebs = self.encode_batch_size
+        for j in range(0, len(missing), ebs):
+            chunk_idx = missing[j : j + ebs]
+            batch_seqs = [sequences[k] for k in chunk_idx]
+            outs = self.dnabert_wrapper.get_token_level_outputs_batch(
+                batch_seqs, batch_size=len(batch_seqs)
+            )
+            for u, k in enumerate(chunk_idx):
+                seq = batch_seqs[u]
+                hidden, spans, _ = outs[u]
+                bloom_sig = self.bloom_filter.get_token_aligned_signal(seq, spans)
+                bloom_sum = self.bloom_filter.get_feature_vector(seq)
+                hidden = self._pad_or_truncate(hidden, mt)
+                bloom_sig = self._pad_or_truncate(bloom_sig, mt)
+                all_hidden[k] = hidden
+                all_bloom_signal[k] = bloom_sig
+                all_bloom_summary[k] = bloom_sum
+                if self._feature_cache:
+                    self._feature_cache.save_bgpca(seq, mt, hidden, bloom_sig, bloom_sum)
+        hidden_t = torch.tensor(np.stack(all_hidden, axis=0), dtype=torch.float32)
+        bloom_sig_t = torch.tensor(np.stack(all_bloom_signal, axis=0), dtype=torch.float32)
+        bloom_sum_t = torch.tensor(np.stack(all_bloom_summary, axis=0), dtype=torch.float32)
         labels_t = torch.tensor(labels, dtype=torch.float32)
-
         return hidden_t, bloom_sig_t, bloom_sum_t, labels_t
 
     def train(
@@ -637,7 +677,10 @@ class BloomGuidedPipeline:
         learning_rate: float = 5e-4,
         weight_decay: float = 0.01,
         patience: int = 10,
-        max_grad_norm: float = 1.0
+        max_grad_norm: float = 1.0,
+        num_workers: Optional[int] = None,
+        pin_memory: Optional[bool] = None,
+        use_amp: Optional[bool] = None,
     ) -> Dict[str, list]:
         """
         Train the BGPCA classifier with early stopping and class-weighted loss.
@@ -701,13 +744,23 @@ class BloomGuidedPipeline:
         }
 
         n_samples = len(train_sequences)
-        n_batches = (n_samples + batch_size - 1) // batch_size
-
-        # Early stopping state
+        tw = self.settings.training if self.settings else None
+        nw = num_workers if num_workers is not None else (tw.num_workers if tw else 0)
+        pm = pin_memory if pin_memory is not None else (tw.pin_memory if tw else False)
+        pm = pm and self.device.type == "cuda"
+        do_amp = use_amp if use_amp is not None else (tw.use_amp if tw else False)
+        do_amp = do_amp and self.device.type == "cuda"
+        scaler = torch.amp.GradScaler("cuda", enabled=do_amp)
+        train_loader = DataLoader(
+            TensorDataset(train_hidden, train_bloom_sig, train_bloom_sum, train_labels_t),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=nw,
+            pin_memory=pm,
+        )
         best_val_loss = float('inf')
         best_model_state = None
         patience_counter = 0
-
         print(f"\nTraining settings:")
         print(f"  Samples: {n_samples}")
         print(f"  Epochs: {epochs}")
@@ -717,6 +770,8 @@ class BloomGuidedPipeline:
         print(f"  Gradient clipping: {max_grad_norm}")
         print(f"  Early stopping patience: {patience}")
         print(f"  Optimizer: AdamW + CosineAnnealing")
+        print(f"  DataLoader workers: {nw}")
+        print(f"  AMP: {do_amp}")
         print(f"  Device: {self.device}")
 
         for epoch in range(epochs):
@@ -724,27 +779,26 @@ class BloomGuidedPipeline:
             epoch_loss = 0.0
             epoch_correct = 0
 
-            indices = torch.randperm(n_samples)
+            for b_hidden, b_bloom_sig, b_bloom_sum, b_labels in train_loader:
+                b_hidden = b_hidden.to(self.device, non_blocking=pm)
+                b_bloom_sig = b_bloom_sig.to(self.device, non_blocking=pm)
+                b_bloom_sum = b_bloom_sum.to(self.device, non_blocking=pm)
+                b_labels = b_labels.to(self.device, non_blocking=pm)
 
-            for i in range(n_batches):
-                start_idx = i * batch_size
-                end_idx = min(start_idx + batch_size, n_samples)
-                batch_idx = indices[start_idx:end_idx]
+                optimizer.zero_grad(set_to_none=True)
+                with torch.amp.autocast("cuda", enabled=do_amp):
+                    outputs = self.model(b_hidden, b_bloom_sig, b_bloom_sum).squeeze()
+                    loss = criterion(outputs, b_labels)
 
-                b_hidden = train_hidden[batch_idx].to(self.device)
-                b_bloom_sig = train_bloom_sig[batch_idx].to(self.device)
-                b_bloom_sum = train_bloom_sum[batch_idx].to(self.device)
-                b_labels = train_labels_t[batch_idx].to(self.device)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), max_norm=max_grad_norm
+                )
+                scaler.step(optimizer)
+                scaler.update()
 
-                optimizer.zero_grad()
-                outputs = self.model(b_hidden, b_bloom_sig, b_bloom_sum).squeeze()
-                loss = criterion(outputs, b_labels)
-
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
-                optimizer.step()
-
-                epoch_loss += loss.item() * len(batch_idx)
+                epoch_loss += loss.item() * len(b_labels)
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 epoch_correct += (preds == b_labels).sum().item()
 
@@ -823,19 +877,16 @@ class BloomGuidedPipeline:
 
         return loss, acc
 
-    MAX_SEQUENCE_LENGTH = 5000
-
     def _validate_sequence(self, sequence: str) -> str:
-        """Validate and sanitize a DNA sequence."""
         if not sequence or not isinstance(sequence, str):
             raise ValueError("Sequence must be a non-empty string")
         sequence = sequence.upper().strip()
         if len(sequence) < 10:
             raise ValueError(f"Sequence too short ({len(sequence)} bp). Minimum is 10.")
-        if len(sequence) > self.MAX_SEQUENCE_LENGTH:
+        if len(sequence) > self.max_sequence_length:
             raise ValueError(
                 f"Sequence too long ({len(sequence)} bp). "
-                f"Maximum is {self.MAX_SEQUENCE_LENGTH}."
+                f"Maximum is {self.max_sequence_length}."
             )
         invalid = set(sequence) - set('ATCGN')
         if invalid:
@@ -882,26 +933,16 @@ class BloomGuidedPipeline:
     def predict_with_uncertainty(
         self,
         sequence: str,
-        n_samples: int = 20
+        n_samples: Optional[int] = None,
     ) -> Dict[str, float]:
-        """
-        Predict with Monte Carlo dropout uncertainty estimation.
-
-        Returns prediction, confidence, AND epistemic uncertainty.
-        High uncertainty = model is unsure (important for clinical use).
-
-        Args:
-            sequence: DNA sequence (10-5000 bp, ATCGN only)
-            n_samples: Number of MC dropout forward passes
-        """
         if not self.trained:
             raise ValueError("Model must be trained before prediction")
 
         sequence = self._validate_sequence(sequence)
         hidden_t, bloom_sig_t, bloom_sum_t, _ = self._prepare_single_sequence(sequence)
-
+        ns = self.mc_dropout_samples if n_samples is None else n_samples
         mean_pred, uncertainty = self.model.predict_with_uncertainty(
-            hidden_t, bloom_sig_t, bloom_sum_t, n_samples=n_samples
+            hidden_t, bloom_sig_t, bloom_sum_t, n_samples=ns
         )
 
         prob = mean_pred.item()
