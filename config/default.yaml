@@ -1,0 +1,171 @@
+gene:
+  symbol: HBB
+  refseq_transcript: NM_000518.5
+  ncbi_gene_id: "3043"
+  chromosome: "11"
+  grch38_start: 5225464
+  grch38_end: 5227071
+  example_mutation_name: E6V
+
+reference:
+  fasta_path: bloom_dnabert/data/reference/hbb_nm000518.fasta
+  sha256: null
+
+annotations:
+  cds_end_exclusive_0: 92
+  reject_ambiguous_bases_in_reference: true
+
+clinvar:
+  search_term: 'HBB[gene] AND "single nucleotide variant"[variant type] AND ("pathogenic"[clinical significance] OR "likely pathogenic"[clinical significance] OR "benign"[clinical significance] OR "likely benign"[clinical significance])'
+  retmax: 500
+  esummary_batch_size: 50
+  request_delay_sec: 0.35
+  timeout_sec: 15
+  sequence_context_size: 100
+  sequence_context_jitter: 10
+  background_snp_rate: 0.002
+  require_refseq_in_title: true
+  hgvs_linear_overrides:
+    "c.93-21G>A": 201
+
+synthetic:
+  pathogenic:
+    - variant_id_prefix: HbS
+      variant_type: HbS
+      label: 1
+      mutation: E6V
+      hgvs_c: c.20A>T
+      hgvs_p: p.Glu7Val
+      disease: Sickle Cell Disease
+      clinical_significance: Pathogenic
+      position: 19
+      ref: A
+      alt: T
+      protected_positions: [18, 19, 20]
+      count: 60
+      context_size: 100
+      context_jitter: 20
+      background_snp_rate: 0.005
+    - variant_id_prefix: HbC
+      variant_type: HbC
+      label: 1
+      mutation: E6K
+      hgvs_c: c.19G>A
+      hgvs_p: p.Glu7Lys
+      disease: HbC Disease
+      clinical_significance: Pathogenic
+      position: 18
+      ref: G
+      alt: A
+      protected_positions: [18, 19, 20]
+      count: 40
+      context_size: 100
+      context_jitter: 20
+      background_snp_rate: 0.005
+    - variant_id_prefix: HbE
+      variant_type: HbE
+      label: 1
+      mutation: E26K
+      hgvs_c: c.79G>A
+      hgvs_p: p.Glu27Lys
+      disease: HbE Disease
+      clinical_significance: Pathogenic
+      position: 78
+      ref: G
+      alt: A
+      protected_positions: [78, 79, 80]
+      count: 25
+      context_size: 100
+      context_jitter: 15
+      background_snp_rate: 0.005
+      require_ref_base: G
+    - variant_id_prefix: BetaThal_IVS
+      variant_type: BetaThal
+      label: 1
+      mutation: IVS-I-110
+      hgvs_c: c.93-21G>A
+      hgvs_p: splicing
+      disease: Beta-Thalassemia
+      clinical_significance: Pathogenic
+      position: 201
+      ref: G
+      alt: A
+      protected_positions: [201]
+      count: 25
+      context_size: 100
+      context_jitter: 15
+      background_snp_rate: 0.005
+      require_ref_base: G
+  benign_synonymous:
+    first_codon_index: 1
+    last_codon_index: 29
+    samples_per_position: 8
+    context_size: 100
+    context_jitter: 20
+    background_snp_rate: 0.003
+  benign_intronic:
+    count: 30
+    region_start_offset: 20
+    region_end_offset: 100
+    context_size: 100
+    context_jitter: 20
+    background_snp_rate: 0.003
+    hgvs_intron_anchor: "93+"
+  vus:
+    count: 30
+    context_size: 100
+    context_jitter: 15
+    background_snp_rate: 0.003
+    exclude_positions: [18, 19, 20, 78, 79, 80]
+
+bloom:
+  k_sizes: [6, 8, 10]
+  capacity: 100000
+  error_rate: 0.001
+  seeds_path: bloom_dnabert/data/pathogenic_kmer_seeds.txt
+
+dnabert:
+  model_name: zhihan1996/DNABERT-2-117M
+  tokenizer_max_length: 512
+
+bgpca:
+  d_bloom: 64
+  n_cross_attn_layers: 2
+  n_heads: 4
+  dropout: 0.2
+
+training:
+  max_tokens: 128
+  batch_size: 16
+  encode_batch_size: 8
+  learning_rate_baseline: 0.001
+  learning_rate_bgpca: 0.0005
+  weight_decay: 0.01
+  patience: 10
+  max_grad_norm: 1.0
+  num_workers: 0
+  pin_memory: true
+  use_amp: true
+  baseline_epochs_cli: 30
+  gradio_epochs_default: 30
+  gradio_epochs_max: 100
+
+data:
+  cache_dir: data
+  random_seed: 42
+  val_split: 0.2
+  test_split: 0.2
+  cache_format_version: 4
+  variants_cache_template: "{gene_symbol}_variants.csv"
+  codon_table_path: null
+  feature_cache_dir: null
+
+inference:
+  max_sequence_length: 5000
+  mc_dropout_samples: 20
+
+gradio:
+  server_name: "0.0.0.0"
+  server_port: null
+  port_scan_start: 7860
+  port_scan_end: 7870
