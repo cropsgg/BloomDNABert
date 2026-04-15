@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Run the Bloom-DNABERT Gradio dashboard (use from project root).
 set -e
 cd "$(dirname "$0")"
 if [[ ! -d .venv ]]; then
   echo "Creating virtual environment..."
-  python3 -m venv .venv
+  if command -v python3.12 >/dev/null 2>&1; then
+    python3.12 -m venv .venv
+  else
+    python3 -m venv .venv
+  fi
   PIP_DISABLE_PIP_VERSION_CHECK=1 .venv/bin/pip install -q -r requirements.txt
 fi
-echo "Starting dashboard at http://127.0.0.1:7860"
-.venv/bin/python app.py
+.venv/bin/python -u app.py
