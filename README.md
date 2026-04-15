@@ -1,347 +1,197 @@
-# Bloom-Enhanced DNABERT for Sickle Cell Variant Classification
+# BloomDNABert
 
-A hybrid system combining **Bloom filters** for fast pathogenic k-mer detection with **DNABERT-2** embeddings for variant classification, featuring the novel **Bloom-Guided Positional Cross-Attention (BGPCA)** architecture for position-aware cross-modal fusion with uncertainty estimation.
+BloomDNABert is a **research system** that studies how to classify **DNA sequence windows** around variants as **pathogenic-like vs benign-like**, using **HBB (hemoglobin beta)** as the primary worked example (sickle cell and related alleles). It is **not** a clinical diagnostic tool.
 
-## Key Features
+---
 
-- **BGPCA Architecture (Novel)**: Cross-attention where Bloom filter signals serve as attention biases
-- **Multi-scale Bloom Filters**: Fast O(1) lookup of known pathogenic k-mers at k=6, 8, 10
-- **DNABERT-2 Integration**: 117M parameter transformer for deep sequence understanding
-- **Position-Aware Fusion**: Preserves spatial correspondence between Bloom hits and DNABERT tokens
-- **Uncertainty Estimation**: Monte Carlo dropout for epistemic uncertainty quantification
-- **Mutation-Aware Pooling**: Bloom-guided position importance weighting
-- **Gated Cross-Modal Fusion**: Dynamically balances pattern matching vs contextual understanding
-- **Interpretable Visualizations**: Attention heatmaps, position importance, gate values
-- **Early Stopping + Best Checkpoint**: Automatic training halt with model restoration
-- **K-Fold Cross-Validation**: Reliable performance estimates for small datasets
-- **Class-Weighted Loss**: Handles imbalanced pathogenic/benign ratios
-- **Calibration Analysis**: ECE/MCE metrics to verify prediction reliability
-- **ClinVar Integration**: Real variant data from NCBI with synthetic fallback
-- **Interactive Web Dashboard**: Gradio-based UI for real-time analysis
+## What we are trying to do
 
-## Novel Contribution: BGPCA Architecture
+Human genetics produces enormous numbers of DNA variants. For a given locus, the practical question is often: does this sequence pattern behave like known **pathogenic** changes or like **benign** ones? Classical approaches use expert rules, population data, and literature. Here we explore a **hybrid machine-learning approach** that combines:
 
-### The Problem
+1. **Prior biological knowledge encoded as k-mers** — pathogenic-associated short motifs are indexed in **Bloom filters** for fast, position-resolved signals (with the usual Bloom false-positive tradeoff).
+2. **General sequence representation** — **DNABERT-2** embeds the local window so the model can pick up context beyond fixed k-mer lists.
+3. **Structured fusion** — the **Bloom-Guided Positional Cross-Attention (BGPCA)** design ties Bloom hit locations to transformer tokens so positional information is not collapsed too early; a simpler **baseline** concatenates Bloom summaries with pooled DNABERT features for comparison.
 
-Existing hybrid approaches for DNA variant classification simply **concatenate** features from different sources (e.g., Bloom filter statistics + DNABERT embeddings), which causes:
+**Problem we address in software:** build a **config-driven**, **gene-agnostic pipeline skeleton** (defaults target **HBB / NM_000518.5**) that can **pull ClinVar** summaries when the network is available, **validate** variants against a **reference FASTA**, **augment** with controlled **synthetic** examples, **train** two model styles (baseline vs BGPCA), and **inspect** behavior in a **Gradio** dashboard (predictions, attention-related views, Bloom context).
 
-1. **Positional information loss**: Bloom filters know *exactly where* pathogenic k-mer hits occur, but this is crushed into 18 scalar summary statistics
-2. **No cross-modal interaction**: Bloom signals never influence what the transformer attends to
-3. **Naive fusion**: The MLP must learn all modality interactions from scratch
-4. **No uncertainty**: No way to express "I'm not confident about this prediction"
+---
 
-### The Solution: Bloom-Guided Positional Cross-Attention
+## What we are trying to achieve
 
-BGPCA preserves per-position Bloom filter signals and uses them as **additive attention biases** in a cross-attention mechanism with DNABERT's per-token hidden states.
+**Scientific and engineering goals:**
 
-**Standard cross-attention:**
+| Goal | Meaning |
+|------|--------|
+| **Biologically grounded labels** | Training examples should use **reference-checked** alleles where possible: ClinVar rows are only kept if HGVS resolves to an **SNV**, the **reference base matches** the FASTA, and the window is actually **mutated** (no pathogenic label on wild-type sequence). Intronic HGVS that do not map cleanly to linear indices use explicit **`hgvs_linear_overrides`** in config so coordinates stay consistent with the bundled reference. |
+| **Reproducible configuration** | One **YAML** profile (`config/default.yaml`) drives gene symbol, transcript id, reference path, ClinVar query, Bloom and DNABERT settings, training hyperparameters, and cache layout. Override with env **`BLOOM_CONFIG`** pointing at another YAML file. |
+| **Interpretability hooks** | Bloom provides **where** k-mer hits land; DNABERT provides **context**; BGPCA and the dashboard visualize **attention-related** structure so researchers can sanity-check whether the model focuses on plausible regions. |
+| **Honest scope** | The model predicts a **binary research label** on **synthetic + ClinVar-derived windows**, not clinical pathogenicity. **Uncertainty** (e.g. MC dropout where enabled) indicates model doubt, not patient risk. |
+
+**Outcomes we want from this repository:**
+
+- A **clear baseline** (concat + MLP) vs **BGPCA** comparison on the same data pipeline.
+- A **documented data path** from ClinVar → parsed HGVS → sequence windows → train/val/test splits with **leakage reduction** (duplicate sequences trimmed across splits where implemented).
+- A **runnable demo** (`app.py` / `run_app.sh`) for interactive exploration.
+
+---
+
+## How it works (high level)
+
+1. **Reference** — Load the cDNA (or aligned) sequence from `reference.fasta_path` in config. Optional SHA-256 check. Ambiguous bases (e.g. `N`) can be rejected when `annotations.reject_ambiguous_bases_in_reference` is true.
+2. **Variants** — `ClinVarDataLoader` searches ClinVar with the configured term, parses **simple cDNA SNV** HGVS, requires **RefSeq in the title** when enabled, matches **ref allele** to the FASTA, and builds a labeled window per variant. If ClinVar is unavailable, **synthetic** pathogenic/benign/VUS examples from YAML still run.
+3. **Features** — Bloom: multi-scale k-mers from a **seed file**; DNABERT: tokenizer + encoder; pipelines optionally use **caching**, **DataLoader** batching, and **AMP** per training config.
+4. **Models** — **HybridClassifierPipeline** (baseline) vs **BloomGuidedPipeline** (BGPCA); training knobs live under `training:` in YAML.
+
+BGPCA idea (attention with Bloom-derived bias) is summarized in the architecture diagram in the section below; mathematically, Bloom-derived structure enters as **positional bias** into cross-attention so high Bloom signal positions can pull attention before pooling and classification.
+
+---
+
+## Architecture (BGPCA vs baseline)
+
+**Baseline:** Bloom → fixed-size summary (e.g. per-scale statistics) + DNABERT → mean-pooled vector → **concatenation** → MLP.
+
+**BGPCA:** Bloom → **per-position** encoding; DNABERT → **per-token** hidden states → **cross-attention** with Bloom-guided bias → mutation-aware pooling and **gated** fusion with Bloom summaries → classifier (+ optional uncertainty).
 
 ```
-Attn(Q, K, V) = softmax(QK^T / sqrt(d)) V
+DNA window |
+    +--> Multi-scale Bloom (k=6,8,10) --> positional signal + summaries
+    |
+    +--> DNABERT-2 --> per-token hidden states |
+              +--> Bloom-guided cross-attention + pooling + gate --> logit / uncertainty
 ```
 
-**Bloom-guided cross-attention (novel):**
+---
 
-```
-Attn(Q, K, V; B) = softmax(QK^T / sqrt(d) + phi(B)) V
-```
+## Configuration
 
-where `phi(B)` is a learned projection of Bloom positional encodings that creates per-head, per-position attention biases. Positions with strong Bloom activation receive higher bias, naturally drawing the model's attention to potential mutation sites.
+- **Default file:** `config/default.yaml`
+- **Override:** set `BLOOM_CONFIG` to an absolute or relative path to another YAML file.
+- **Important keys for biological consistency:**
+  - `gene.refseq_transcript` — used to gate ClinVar titles (e.g. NM_000518).
+  - `annotations.cds_end_exclusive_0` — end of first CDS segment in **0-based exclusive** indexing for intron linearization heuristics.
+  - `clinvar.require_refseq_in_title` — drop ClinVar rows whose title does not contain the configured RefSeq stem.
+  - `clinvar.hgvs_linear_overrides` — map specific HGVS strings to **0-based** indices when automatic linearization is insufficient (e.g. complex intronic numbering vs your FASTA).
 
-### Architecture Diagram
+Paths in YAML are resolved relative to the **project root** (parent of `bloom_dnabert/`).
 
-```
-DNA Sequence
-      |
-      +---> [Bloom Filter (k=6,8,10)]
-      |           |                    |
-      |      Per-position signal   Summary features
-      |      [seq_len, 3]          [18-dim]
-      |           |                    |
-      |    [PositionalBloomEncoder]    |
-      |      (multi-scale 1D CNN)      |
-      |      [seq_len, 64]            |
-      |           |                    |
-      +---> [DNABERT-2 Encoder]        |
-                  |                    |
-           Per-token hidden            |
-           [seq_len, 768]             |
-                  |                    |
-      [BloomGuidedCrossAttention]      |
-        Q = DNABERT tokens             |
-        K = Bloom encodings            |
-        V = DNABERT tokens             |
-        Bias = Bloom activation        |
-              x N layers               |
-                  |                    |
-       [MutationAwarePooling]          |
-         (Bloom-weighted attention     |
-          over positions)              |
-                  |                    |
-              [768-dim]                |
-                  |                    |
-       [GatedCrossModalFusion] <-------+
-         g * cross_attn + (1-g) * bloom_proj
-                  |
-           [Classification Head]
-                  |
-         (logit, uncertainty)
-```
+---
 
-### Why This Is Novel
+## Quick start
 
-| Aspect | Prior Work | BGPCA |
-|--------|-----------|-------|
-| Bloom filter role | Feature extractor (flat vector) | Attention bias generator (positional) |
-| Spatial information | Lost in summarization | Preserved per-position |
-| Cross-modal interaction | None (independent streams) | Cross-attention with Bloom bias |
-| Fusion strategy | Concatenation | Learned gating |
-| DNABERT features | Pooled embedding (768-dim) | Per-token hidden states |
-| Uncertainty | Not available | Monte Carlo dropout |
-| Interpretability | Basic attention maps | Position importance + gate values |
-
-### Comparison: Baseline vs BGPCA
-
-| Component | Baseline | BGPCA |
-|-----------|----------|-------|
-| Bloom features | 18-dim summary | Per-position activation signal |
-| DNABERT features | Mean-pooled 768-dim | Per-token hidden states |
-| Fusion | `cat(bloom, dnabert)` -> MLP | Cross-attention + gated fusion |
-| Architecture | 2-layer MLP (786->256->128->1) | Bloom encoder + 2x cross-attn + pooling + gate + classifier |
-| Position awareness | None | Full positional correspondence |
-| Uncertainty | No | MC Dropout (20 samples) |
-| Interpretability | Attention heatmap | Position importance, cross-attn weights, gate values |
-
-## Quick Start
-
-### 1. Install Dependencies
+**Option A — helper script (creates `.venv` with Python 3.12 if available):**
 
 ```bash
-pip install -r requirements.txt
+./run_app.sh
 ```
 
-### 2. Launch Web Dashboard
+**Option B — manual:**
 
 ```bash
-python app.py
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py
 ```
 
-The dashboard will be available at `http://localhost:7860`
+**CLI training example:**
 
-### 3. Using the Dashboard
+```bash
+.venv/bin/python run_training.py
+```
 
-1. **Train the Model**:
-   - Go to the "Train Model" tab
-   - Select architecture: **BGPCA (Novel)** or Baseline
-   - Adjust epochs (default: 30)
-   - Click "Train Model"
+Gradio listens on `0.0.0.0` by default; port may be chosen from `gradio.port_scan_start`–`port_scan_end` if `server_port` is null.
 
-2. **Analyze Sequences**:
-   - Go to "Analyze Sequence" tab
-   - Enter a DNA sequence or load an example
-   - Click "Analyze Sequence"
-   - View prediction, uncertainty, attention heatmap, and Bloom filter hits
+---
 
-## Architecture Components
-
-### 1. Positional Bloom Encoder
-
-Multi-scale 1D convolutions (kernels: 3, 5, 7) encode raw per-position Bloom filter activation signals into dense embeddings, capturing local hit patterns like mutation hotspots vs isolated false positives.
-
-### 2. Bloom-Guided Cross-Attention
-
-The core innovation. Cross-attention where:
-- **Q** (queries) come from DNABERT token representations
-- **K** (keys) come from Bloom positional encodings
-- **V** (values) come from DNABERT token representations
-- **Bias** comes from Bloom activation magnitude (structural prior)
-
-The Bloom bias acts as a "spotlight" that tells the attention mechanism: "pay extra attention to these positions -- the Bloom filter detected known pathogenic patterns here."
-
-### 3. Mutation-Aware Pooling
-
-Instead of mean pooling (treats all positions equally), learns position-wise importance weights guided by Bloom activation. Positions overlapping pathogenic k-mer hits naturally receive higher weight.
-
-### 4. Gated Cross-Modal Fusion
-
-A sigmoid gate that dynamically balances:
-- **Cross-attention path** (rich contextual understanding from DNABERT + Bloom spatial information)
-- **Bloom summary path** (direct pattern matching features)
-
-When Bloom has strong signal, the gate trusts pattern matching. When weak, it relies on DNABERT's generalization.
-
-### 5. Monte Carlo Dropout Uncertainty
-
-Multiple stochastic forward passes with dropout enabled estimate epistemic uncertainty. High uncertainty indicates the model is unsure -- critical for clinical applications.
-
-## Training Robustness
-
-Both architectures include production-grade training features:
-
-- **Early stopping** with configurable patience (default 10 epochs), tracking validation loss with automatic best-model checkpoint restoration
-- **Gradient clipping** (max norm 1.0) prevents gradient explosions
-- **Class-weighted BCE loss** automatically compensates for imbalanced pathogenic/benign ratios
-- **CosineAnnealing LR scheduler** with warm restarts for smooth convergence
-- **K-fold cross-validation** (`pipeline.cross_validate(seqs, labels, n_folds=5)`) for reliable small-dataset evaluation
-- **Calibration analysis** (`pipeline.calibration_analysis(seqs, labels)`) computes ECE/MCE to verify predicted probabilities match observed frequencies
-- **Input validation** enforces 10-5000 bp length, ATCGN-only alphabet, and sanitizes all inputs before inference
-
-## Python API
-
-### Novel BGPCA Architecture
+## Python API (config-aware)
 
 ```python
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-from bloom_dnabert.classifier import BloomGuidedPipeline
+from pathlib import Path
+from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper, load_settings
+from bloom_dnabert.classifier import HybridClassifierPipeline, BloomGuidedPipeline
+from bloom_dnabert.data_loader import ClinVarDataLoader
 
-# Initialize
-bloom_filter = MultiScaleBloomFilter()
-bloom_filter.load_hbb_pathogenic_variants()
-dnabert = DNABERTWrapper()
+settings = load_settings(Path("config/default.yaml"))
+data_loader = ClinVarDataLoader(settings)
+train_df, val_df, test_df = data_loader.get_training_data(use_cache=True)
 
-# Create BGPCA pipeline
-pipeline = BloomGuidedPipeline(bloom_filter, dnabert)
+bc, dc = settings.bloom, settings.dnabert
+bloom = MultiScaleBloomFilter(
+    capacity=bc.capacity,
+    error_rate=bc.error_rate,
+    k_sizes=bc.k_sizes,
+)
+bloom.load_pathogenic_seeds(bc.seeds_path)
 
-# Train
-pipeline.train(train_sequences, train_labels, epochs=50)
+dnabert = DNABERTWrapper(
+    model_name=dc.model_name,
+    tokenizer_max_length=dc.tokenizer_max_length,
+)
 
-# Predict with uncertainty
-result = pipeline.predict_with_uncertainty("CACGTGGTCTACCCCTGAGGAG...")
-print(f"Prediction: {result['prediction']}")
-print(f"Probability: {result['probability']:.3f}")
-print(f"Uncertainty: {result['uncertainty']:.4f} ({result['uncertainty_level']})")
-
-# Predict with full interpretability
-interp = pipeline.predict_with_interpretability("CACGTGGTCTACCCCTGAGGAG...")
-print(f"Position importance shape: {interp['position_importance'].shape}")
-print(f"Gate values (Bloom vs DNABERT): {interp['gate_values'].mean():.3f}")
+baseline = HybridClassifierPipeline(bloom, dnabert, settings=settings)
+bgpca = BloomGuidedPipeline(bloom, dnabert, settings=settings)
 ```
 
-### Baseline Architecture
+---
 
-```python
-from bloom_dnabert.classifier import HybridClassifierPipeline
-
-pipeline = HybridClassifierPipeline(bloom_filter, dnabert)
-pipeline.train(train_sequences, train_labels, epochs=50)
-result = pipeline.predict("CACGTGGTCTACCCCTGAGGAG...")
-```
-
-### K-Fold Cross-Validation
-
-```python
-# More reliable metrics for small datasets
-results = pipeline.cross_validate(all_sequences, all_labels, n_folds=5, epochs=30)
-print(f"Accuracy: {results['accuracy_mean']:.3f} +/- {results['accuracy_std']:.3f}")
-print(f"AUC-ROC: {results['auc_roc_mean']:.3f} +/- {results['auc_roc_std']:.3f}")
-```
-
-### Calibration Analysis
-
-```python
-# Verify prediction reliability
-cal = pipeline.calibration_analysis(test_sequences, test_labels)
-print(f"Expected Calibration Error: {cal['ece']:.4f}")
-print(f"Maximum Calibration Error: {cal['mce']:.4f}")
-```
-
-### Per-Position Bloom Signal
-
-```python
-# Get per-position Bloom activation
-signal = bloom_filter.get_positional_signal("CACGTGGTCTACCCCTGAGGAG")
-# shape: [seq_len, 3] -- one channel per k-mer scale (k=6,8,10)
-```
-
-## Project Structure
+## Project structure (current)
 
 ```
 BloomDNABert/
-+-- app.py                              # Gradio web dashboard (both architectures)
-+-- requirements.txt                    # Pinned dependency versions
-+-- LICENSE                             # MIT License
-+-- README.md                           # This file
-+-- bloom_dnabert/
-|   +-- __init__.py                     # Package exports
-|   +-- bloom_filter.py                 # Multi-scale Bloom filter + positional signal
-|   +-- dnabert_wrapper.py              # DNABERT-2 wrapper + per-token hidden states
-|   +-- bloom_attention_bridge.py       # BGPCA architecture (NOVEL)
-|   +-- classifier.py                   # Both pipelines (Baseline + BGPCA)
-|   +-- data_loader.py                  # ClinVar API + synthetic data generation
-|   +-- visualizer.py                   # Attention heatmap generation
-+-- tests/
-|   +-- conftest.py                     # Test configuration and mock setup
-|   +-- test_bloom_filter.py            # Bloom filter unit tests
-|   +-- test_bloom_attention_bridge.py  # BGPCA architecture tests
-|   +-- test_classifier.py             # Classifier + input validation tests
-|   +-- test_data_loader.py            # Data quality + no-leakage tests
-+-- data/
-    +-- hbb_variants.csv                # ClinVar + synthetic variant dataset
+├── app.py                 # Gradio dashboard
+├── run_training.py        # Example training entrypoint
+├── run_app.sh             # Venv + app launcher
+├── requirements.txt
+├── config/
+│   └── default.yaml       # Primary configuration
+├── bloom_dnabert/
+│   ├── settings.py        # Pydantic models + load_settings()
+│   ├── data_loader.py     # ClinVar + synthetic data
+│   ├── reference.py       # FASTA loading
+│   ├── bloom_filter.py
+│   ├── dnabert_wrapper.py
+│   ├── bloom_attention_bridge.py
+│   ├── classifier.py
+│   ├── feature_cache.py
+│   ├── codon.py
+│   ├── data/
+│   │   ├── reference/     # e.g. HBB transcript FASTA
+│   │   ├── codon_table.json
+│   │   └── pathogenic_kmer_seeds.txt
+│   └── ...
+├── tests/
+└── data/                  # Default cache dir for variant CSV (configurable)
 ```
 
-## Scientific Background
+---
 
-### Sickle Cell Disease
-- Most common inherited blood disorder
-- Caused by HBB gene mutation (chr11:5227002 T>A)
-- Point mutation at codon 6: Glu -> Val
-- Results in abnormal hemoglobin (HbS)
-- Affects millions worldwide
+## Data sources and limitations
 
-### Related Work
-- **DNABERT-2**: Zhou et al. (2023) -- transformer for DNA sequences
-- **Bloom Filters in Bioinformatics**: Solomon & Kingsford (2016) -- k-mer indexing
-- **ALiBi**: Press et al. (2022) -- learned attention biases (related concept)
-- **Perceiver**: Jaegle et al. (2021) -- cross-attention architecture (related concept)
-- **MC Dropout**: Gal & Ghahramani (2016) -- uncertainty estimation
-- **ClinVar**: Landrum et al. (2018) -- clinical variant database
+- **ClinVar** — Public NCBI summaries; parsing is limited to **simple SNV** HGVS patterns and **transcript gating** as configured. Many real variants (indels, complex HGVS) are skipped.
+- **Synthetic data** — Augments class balance and covers known HBB examples (e.g. HbS, HbC, HbE, selected thalassemia-style entries per YAML). **Benign intronic** rows use synthetic HGVS-like strings; they are for **training distribution**, not clinical assertions.
+- **Bloom seeds** — K-mers are a **prior**, not a gold standard; false positives exist by design.
 
-## Limitations
-
-- ClinVar integration supplements synthetic data; full clinical-grade training requires larger curated datasets
-- DNABERT-2 max sequence length: ~2048 tokens (BPE)
-- Bloom filters have false positives (tunable, currently 0.1%)
-- BGPCA adds computational overhead vs baseline (cross-attention is O(n^2))
-- Windows: Uses PyTorch attention (no Triton acceleration)
+---
 
 ## Testing
-
-Run the test suite (57 tests covering all components):
 
 ```bash
 pip install pytest
 python -m pytest tests/ -v
 ```
 
-## Future Work
-
-- Expand ClinVar integration to fetch full variant annotations and evidence levels
-- Add support for more genes (BRCA1, BRCA2, TP53)
-- Implement counting Bloom filters for frequency tracking
-- Add multi-variant analysis (compound heterozygotes)
-- Extend BGPCA to multi-class classification (pathogenic subtypes)
-- Clinical validation studies on independent datasets
-- Fairness analysis across population groups
-- Explore Bloom filter as attention bias in other domains (proteomics, drug discovery)
-
-## Citation
-
-```bibtex
-@software{bgpca_bloom_dnabert_2026,
-  title={Bloom-Guided Positional Cross-Attention for DNA Variant Classification},
-  author={Your Name},
-  year={2026},
-  note={A novel architecture bridging probabilistic data structures with neural
-        attention mechanisms for position-aware cross-modal variant classification}
-}
-```
-
-## Disclaimer
-
-**This is a research prototype for educational and research purposes only.**
-This system should NOT be used for clinical diagnosis or treatment decisions.
-Always consult with qualified healthcare professionals and genetic counselors for medical interpretation of genetic variants.
+Use a Python version for which **PyTorch** and other dependencies in `requirements.txt` install cleanly (often **3.10–3.12**).
 
 ---
 
-**Built with**: PyTorch, Transformers, Gradio, Plotly
+## Disclaimer
+
+**Research and education only.** Do not use this system for clinical diagnosis, treatment, or genetic counseling decisions. Variant interpretation requires validated pipelines, human expertise, and appropriate regulatory oversight.
+
+---
+
+## Related concepts (literature pointers)
+
+- DNABERT-2 and related DNA transformers  
+- Bloom filters in bioinformatics (k-mer indexing)  
+- ClinVar and HGVS nomenclature  
+- Monte Carlo dropout for uncertainty (where implemented)

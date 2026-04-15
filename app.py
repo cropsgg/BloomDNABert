@@ -23,6 +23,7 @@ import socket
 from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper, HybridClassifier, AttentionVisualizer
 from bloom_dnabert.classifier import HybridClassifierPipeline, BloomGuidedPipeline
 from bloom_dnabert.data_loader import ClinVarDataLoader
+from bloom_dnabert.settings import load_settings
 
 
 class VariantAnalysisDashboard:
@@ -30,8 +31,8 @@ class VariantAnalysisDashboard:
     Interactive web dashboard for variant analysis.
     """
 
-    def __init__(self):
-        """Initialize the dashboard with all components."""
+    def __init__(self, settings=None):
+        self.settings = settings if settings is not None else load_settings()
         self.bloom_filter = None
         self.dnabert_wrapper = None
         self.baseline_pipeline = None
@@ -45,17 +46,25 @@ class VariantAnalysisDashboard:
         self._initialize_components()
 
     def _initialize_components(self):
-        """Initialize all ML components with error handling."""
         try:
             print("Loading Bloom filter...")
-            self.bloom_filter = MultiScaleBloomFilter(capacity=100000, error_rate=0.001)
-            self.bloom_filter.load_hbb_pathogenic_variants()
+            bc = self.settings.bloom
+            self.bloom_filter = MultiScaleBloomFilter(
+                capacity=bc.capacity,
+                error_rate=bc.error_rate,
+                k_sizes=bc.k_sizes,
+            )
+            self.bloom_filter.load_pathogenic_seeds(bc.seeds_path)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Bloom filter: {e}") from e
 
         try:
             print("Loading DNABERT-2 model...")
-            self.dnabert_wrapper = DNABERTWrapper()
+            dc = self.settings.dnabert
+            self.dnabert_wrapper = DNABERTWrapper(
+                model_name=dc.model_name,
+                tokenizer_max_length=dc.tokenizer_max_length,
+            )
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load DNABERT-2 model: {e}. "
@@ -66,12 +75,14 @@ class VariantAnalysisDashboard:
 
         self.baseline_pipeline = HybridClassifierPipeline(
             bloom_filter=self.bloom_filter,
-            dnabert_wrapper=self.dnabert_wrapper
+            dnabert_wrapper=self.dnabert_wrapper,
+            settings=self.settings,
         )
 
         self.bgpca_pipeline = BloomGuidedPipeline(
             bloom_filter=self.bloom_filter,
-            dnabert_wrapper=self.dnabert_wrapper
+            dnabert_wrapper=self.dnabert_wrapper,
+            settings=self.settings,
         )
 
         print("Dashboard initialized successfully!")
@@ -81,7 +92,7 @@ class VariantAnalysisDashboard:
         try:
             progress(0, desc="Loading data...")
 
-            data_loader = ClinVarDataLoader()
+            data_loader = ClinVarDataLoader(self.settings)
             train_df, val_df, test_df = data_loader.get_training_data()
 
             progress(0.2, desc="Preparing datasets...")
@@ -104,13 +115,26 @@ class VariantAnalysisDashboard:
                 model_name = "Baseline"
                 progress(0.3, desc="Training Baseline model...")
 
+            tc = self.settings.training
+            batch_size = int(
+                os.environ.get("BLOOM_TRAIN_BATCH_SIZE", str(tc.batch_size))
+            )
+            lr = (
+                tc.learning_rate_bgpca
+                if use_bgpca
+                else tc.learning_rate_baseline
+            )
             history = pipeline.train(
                 train_sequences=train_sequences,
                 train_labels=train_labels,
                 val_sequences=val_sequences,
                 val_labels=val_labels,
                 epochs=epochs,
-                batch_size=16
+                batch_size=batch_size,
+                learning_rate=lr,
+                patience=tc.patience,
+                max_grad_norm=tc.max_grad_norm,
+                weight_decay=tc.weight_decay,
             )
 
             progress(0.9, desc="Evaluating on held-out test set...")
@@ -362,10 +386,11 @@ class VariantAnalysisDashboard:
                         )
 
                     with gr.Row():
+                        te = self.settings.training
                         epochs_slider = gr.Slider(
                             minimum=10,
-                            maximum=100,
-                            value=30,
+                            maximum=te.gradio_epochs_max,
+                            value=te.gradio_epochs_default,
                             step=5,
                             label="Training Epochs"
                         )
@@ -481,11 +506,18 @@ class VariantAnalysisDashboard:
     def launch(self, **kwargs):
         """Launch the dashboard."""
         interface = self.create_interface()
-        interface.launch(**kwargs)
+        try:
+            interface.launch(**kwargs)
+        except ValueError as e:
+            if "shareable link must be created" in str(e):
+                retry_kwargs = dict(kwargs)
+                retry_kwargs["share"] = True
+                interface.launch(**retry_kwargs)
+            else:
+                raise
 
 
-def _find_free_port(start: int = 7860, end: int = 7870) -> int:
-    """Find first available port in [start, end)."""
+def _find_free_port(start: int, end: int) -> int:
     for port in range(start, end):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -497,20 +529,27 @@ def _find_free_port(start: int = 7860, end: int = 7870) -> int:
 
 
 def main():
-    """Main entry point for the dashboard."""
     print("\n" + "=" * 60)
     print("Bloom-Enhanced DNABERT Variant Classifier")
     print("with Bloom-Guided Positional Cross-Attention (BGPCA)")
     print("=" * 60 + "\n")
 
-    port = _find_free_port()
-    if port != 7860:
-        print(f"Port 7860 in use; using port {port} instead.\n")
+    settings = load_settings()
+    g = settings.gradio
+    env_port = os.environ.get("BLOOM_GRADIO_SERVER_PORT")
+    if env_port:
+        port = int(env_port)
+    elif g.server_port is not None:
+        port = int(g.server_port)
+    else:
+        port = _find_free_port(g.port_scan_start, g.port_scan_end)
+        if port != g.port_scan_start:
+            print(f"Port {g.port_scan_start} in use; using port {port} instead.\n")
 
-    dashboard = VariantAnalysisDashboard()
+    dashboard = VariantAnalysisDashboard(settings=settings)
     dashboard.launch(
         share=False,
-        server_name="0.0.0.0",
+        server_name=g.server_name,
         server_port=port,
     )
 
