@@ -5,12 +5,32 @@ This module wraps DNABERT-2-117M to extract both embeddings and attention weight
 for interpretable variant classification.
 """
 
-import torch
-import numpy as np
-from typing import Dict, List, Tuple, Optional
-from transformers import AutoTokenizer, AutoModel
 import logging
+import os
 import warnings
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+from transformers import AutoModel, AutoTokenizer
+
+from .triton_stub import disable_dnabert_flash_attention, prepare_dnabert_environment
+
+
+def _from_pretrained_local_first(loader, model_name: str, **kwargs):
+    """
+    Prefer the Hugging Face cache without contacting the hub (no blocking HEAD request).
+
+    If the snapshot is incomplete, fall back to a normal online resolve.
+    """
+    offline = os.environ.get("HF_HUB_OFFLINE", "").lower() in ("1", "true", "yes")
+    try:
+        return loader(model_name, local_files_only=True, **kwargs)
+    except Exception:
+        if offline:
+            raise
+        print("DNABERT: loading from local cache only failed; fetching from Hugging Face Hub…")
+        return loader(model_name, local_files_only=False, **kwargs)
 
 
 class DNABERTWrapper:
@@ -41,11 +61,15 @@ class DNABERTWrapper:
             self.device = torch.device(device)
         
         print(f"Loading DNABERT-2 model on {self.device}...")
+
+        # Remove any fake triton shims (they break torch.inductor) and patch DNABERT to skip Flash.
+        prepare_dnabert_environment()
         
-        # Load tokenizer and model (suppress known-harmless warnings and log messages)
-        self.tokenizer = AutoTokenizer.from_pretrained(
+        # Load tokenizer and model (prefer cache — avoids hanging on hub when offline / slow)
+        self.tokenizer = _from_pretrained_local_first(
+            AutoTokenizer.from_pretrained,
             model_name,
-            trust_remote_code=True
+            trust_remote_code=True,
         )
         # Suppress "Some weights..." and "You should probably TRAIN..." (transformers uses logging)
         tlog = logging.getLogger("transformers")
@@ -54,13 +78,16 @@ class DNABERTWrapper:
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*Triton.*")
-                self.model = AutoModel.from_pretrained(
+                self.model = _from_pretrained_local_first(
+                    AutoModel.from_pretrained,
                     model_name,
                     trust_remote_code=True,
-                    output_attentions=True  # Enable attention output
+                    output_attentions=True,
                 ).to(self.device)
         finally:
             tlog.setLevel(old_level)
+
+        disable_dnabert_flash_attention()
         
         self.model.eval()
         

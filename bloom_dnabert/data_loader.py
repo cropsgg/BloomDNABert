@@ -1,8 +1,18 @@
 """
 ClinVar Data Loader for HBB Variants
 
-Generates biologically accurate training data for the HBB gene region,
-including the sickle cell mutation and other hemoglobin disorders.
+Loads training rows for HBB (NM_000518.5): real ClinVar SNVs mapped onto the
+project's linear reference (ATG + intronic sequence), from local CSVs or the
+ClinVar API.
+
+Synthetic rows are **not** used unless explicitly enabled (constructor
+``allow_synthetic=True`` or environment ``BLOOM_DNABERT_ALLOW_SYNTHETIC=1``);
+they are intended for unit tests and local experiments only.
+
+**Important:** ``HBB_REFERENCE`` is genomic; only coding positions **1 through
+91** (0-based indices ``0 .. EXON1_END-1``) are treated as 1:1 with CDS
+coordinates. Variants beyond exon 1 coding are skipped until a full CDS→genomic
+map is added.
 
 Phase 1 data quality fixes applied:
 - Verified HBB reference against NCBI NM_000518.5
@@ -13,6 +23,7 @@ Phase 1 data quality fixes applied:
 - Proper 60/20/20 stratified train/val/test split with no leakage
 """
 
+import os
 import pandas as pd
 import numpy as np
 import requests
@@ -21,6 +32,30 @@ import re
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 from sklearn.model_selection import train_test_split
+
+#: Enable synthetic rows via ``export BLOOM_DNABERT_ALLOW_SYNTHETIC=1`` (tests / dev only).
+SYNTHETIC_ENV_VAR = "BLOOM_DNABERT_ALLOW_SYNTHETIC"
+
+
+class DataSourceError(RuntimeError):
+    """No real variant source available (CSVs, cache, or ClinVar API)."""
+
+    @staticmethod
+    def default_message(cache_dir: Path) -> str:
+        return (
+            "No training variant data available. Add one of:\n"
+            f"  - {cache_dir / 'clinvar_pan_grch38_snvs.csv'} (pan-gene windows; see DATASETS.md)\n"
+            f"  - {cache_dir / 'hbb_clinvar_refined.csv'} (HBB-only; build with "
+            "scripts/build_hbb_clinvar_dataset.py)\n"
+            f"  - {cache_dir / 'hbb_variants.csv'} (API cache, version >= 4)\n"
+            "Or fetch from ClinVar with network access. See DATASETS.md for sources and commands.\n"
+            "For unit tests only, set BLOOM_DNABERT_ALLOW_SYNTHETIC=1 or pass allow_synthetic=True."
+        )
+
+
+def _env_allows_synthetic() -> bool:
+    v = os.environ.get(SYNTHETIC_ENV_VAR, "").strip().lower()
+    return v in ("1", "true", "yes")
 
 
 # Standard genetic code (DNA codons -> amino acids)
@@ -103,42 +138,86 @@ class ClinVarDataLoader:
     # (Intron 1 starts at ~position 92; IVS-I-110 = position 92 + 109 = 201)
     IVS1_110_POSITION = 201
 
-    def __init__(self, cache_dir: str = "data", random_seed: int = 42):
+    def __init__(
+        self,
+        cache_dir: str = "data",
+        random_seed: int = 42,
+        *,
+        allow_synthetic: bool = False,
+    ):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
         self.variants_cache_file = self.cache_dir / "hbb_variants.csv"
         self.rng = np.random.RandomState(random_seed)
+        self._allow_synthetic = bool(allow_synthetic) or _env_allows_synthetic()
+
+    # Curated real-data snapshot (ClinVar HBB, exonic SNVs only); preferred over API/cache.
+    REFINED_CLINVAR_FILE = "hbb_clinvar_refined.csv"
+    # Large pan-gene GRCh38 SNV windows from ``scripts/build_clinvar_pan_dataset.py`` (+ hg38.fa).
+    PAN_CLINVAR_FILE = "clinvar_pan_grch38_snvs.csv"
 
     def fetch_hbb_variants(self, force_download: bool = False) -> pd.DataFrame:
         """
-        Fetch HBB variant dataset.
+        Load variant rows for training (historical name: ``fetch_hbb_variants``).
 
-        Attempts to download real ClinVar variants first, then supplements
-        with synthetic data. Falls back entirely to synthetic if API fails.
+        Priority:
+        1. ``{cache_dir}/clinvar_pan_grch38_snvs.csv`` if present (10k–100k+ pan-gene SNVs).
+        2. ``{cache_dir}/hbb_clinvar_refined.csv`` (small *HBB*-only ClinVar slice).
+        3. Cached ``hbb_variants.csv`` if ``version`` >= 4.
+        4. Live ClinVar API (*HBB* exon-1 SNVs), saved for reuse.
+
+        If nothing is available and synthetic data is not enabled, raises
+        `DataSourceError` (see ``allow_synthetic`` / ``BLOOM_DNABERT_ALLOW_SYNTHETIC``).
         """
+        pan_path = self.cache_dir / self.PAN_CLINVAR_FILE
+        if pan_path.exists() and not force_download:
+            print(f"Loading pan-gene ClinVar SNV dataset from {pan_path}")
+            return pd.read_csv(pan_path)
+
+        refined_path = self.cache_dir / self.REFINED_CLINVAR_FILE
+        if refined_path.exists() and not force_download:
+            print(f"Loading refined ClinVar dataset from {refined_path}")
+            return pd.read_csv(refined_path)
+
         if self.variants_cache_file.exists() and not force_download:
             print(f"Loading cached variants from {self.variants_cache_file}")
             df = pd.read_csv(self.variants_cache_file)
-            if 'version' in df.columns and df['version'].iloc[0] >= 3:
+            if 'version' in df.columns and df['version'].iloc[0] >= 4:
                 return df
-            print("Stale cache detected. Regenerating...")
+            print("Stale cache detected. Regenerating from ClinVar...")
 
-        # Try real ClinVar data, supplement with synthetic
         clinvar_df = self._fetch_clinvar_variants()
-        synthetic_df = self._generate_synthetic_dataset()
-
         if clinvar_df is not None and len(clinvar_df) > 0:
-            # Combine: real ClinVar + synthetic for diversity
-            combined = pd.concat([clinvar_df, synthetic_df], ignore_index=True)
-            combined['version'] = 3
-            combined.to_csv(self.variants_cache_file, index=False)
-            n_real = len(clinvar_df)
-            n_synth = len(synthetic_df)
-            print(f"\nCombined dataset: {n_real} ClinVar + {n_synth} synthetic = {len(combined)}")
-            return combined
+            clinvar_df = self._dedupe_by_hgvs(clinvar_df)
+            clinvar_df['version'] = 4
+            clinvar_df.to_csv(self.variants_cache_file, index=False)
+            print(f"Saved {len(clinvar_df)} ClinVar rows to {self.variants_cache_file}")
+            return clinvar_df
 
-        # Fallback: synthetic only
-        return synthetic_df
+        if self._allow_synthetic:
+            print("ClinVar unavailable or empty; using synthetic HBB dataset (dev/test only).")
+            return self._generate_synthetic_dataset()
+
+        raise DataSourceError(DataSourceError.default_message(self.cache_dir))
+
+    def _dedupe_by_hgvs(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Keep one row per HGVS c. change (first occurrence)."""
+        if df.empty or 'hgvs_c' not in df.columns:
+            return df
+        return df.drop_duplicates(subset=['hgvs_c'], keep='first').reset_index(drop=True)
+
+    @staticmethod
+    def _clinical_significance_text(doc: dict) -> str:
+        """ClinVar eSummary: significance moved from clinical_significance to germline_classification."""
+        cs = doc.get('clinical_significance')
+        if isinstance(cs, dict) and cs.get('description'):
+            return str(cs['description']).lower()
+        gc = doc.get('germline_classification')
+        if isinstance(gc, dict) and gc.get('description'):
+            return str(gc['description']).lower()
+        if cs is not None and not isinstance(cs, dict):
+            return str(cs).lower()
+        return ''
 
     def _fetch_clinvar_variants(self) -> Optional[pd.DataFrame]:
         """
@@ -150,6 +229,8 @@ class ClinVarDataLoader:
         """
         ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
         ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+        # NCBI recommends identifying the client; helps avoid throttling vs anonymous bursts.
+        eutils_meta = {'tool': 'bloom_dnabert', 'email': 'bloom_dnabert@users.noreply.github.com'}
 
         print("Fetching real HBB variants from ClinVar...")
         try:
@@ -157,11 +238,12 @@ class ClinVarDataLoader:
             search_params = {
                 'db': 'clinvar',
                 'term': 'HBB[gene] AND "single nucleotide variant"[variant type] AND ("pathogenic"[clinical significance] OR "likely pathogenic"[clinical significance] OR "benign"[clinical significance] OR "likely benign"[clinical significance])',
-                'retmax': 500,
+                'retmax': 2000,
                 'retmode': 'json',
+                **eutils_meta,
             }
 
-            resp = requests.get(ESEARCH_URL, params=search_params, timeout=15)
+            resp = requests.get(ESEARCH_URL, params=search_params, timeout=30)
             resp.raise_for_status()
             search_data = resp.json()
 
@@ -174,16 +256,25 @@ class ClinVarDataLoader:
 
             # Fetch summaries in batches
             variants = []
-            batch_size = 50
+            batch_size = 40
             for batch_start in range(0, len(id_list), batch_size):
                 batch_ids = id_list[batch_start:batch_start + batch_size]
                 summary_params = {
                     'db': 'clinvar',
                     'id': ','.join(batch_ids),
                     'retmode': 'json',
+                    **eutils_meta,
                 }
-                resp = requests.get(ESUMMARY_URL, params=summary_params, timeout=15)
-                resp.raise_for_status()
+                for attempt in range(5):
+                    resp = requests.get(ESUMMARY_URL, params=summary_params, timeout=45)
+                    if resp.status_code == 429:
+                        time.sleep(2.0 * (attempt + 1))
+                        continue
+                    resp.raise_for_status()
+                    break
+                else:
+                    raise requests.HTTPError("429 from NCBI eutils after retries")
+
                 summary_data = resp.json()
 
                 for uid in batch_ids:
@@ -194,8 +285,8 @@ class ClinVarDataLoader:
                     if variant is not None:
                         variants.append(variant)
 
-                # Respect NCBI rate limit
-                time.sleep(0.35)
+                # Stay under NCBI anonymous rate limits (~3 req/s without API key).
+                time.sleep(1.0)
 
             if not variants:
                 print("  No usable variants parsed from ClinVar.")
@@ -208,7 +299,10 @@ class ClinVarDataLoader:
             return df
 
         except (requests.RequestException, KeyError, ValueError) as e:
-            print(f"  ClinVar API unavailable ({type(e).__name__}: {e}). Using synthetic data only.")
+            print(
+                f"  ClinVar API unavailable ({type(e).__name__}: {e}). "
+                "No rows fetched from API."
+            )
             return None
 
     def _parse_clinvar_record(self, doc: dict) -> Optional[dict]:
@@ -216,28 +310,35 @@ class ClinVarDataLoader:
         Parse a single ClinVar eSummary record into a variant dict.
         Returns None if the record can't be used.
         """
+        # Strict exonic SNV on NM_000518.5 CDS: matches our linear reference indexing.
+        _EXONIC_SNV = re.compile(r'^c\.\d+[ATCG]>[ATCG]$')
+
         try:
-            title = doc.get('title', '')
-            clinical_sig = doc.get('clinical_significance', {})
-            if isinstance(clinical_sig, dict):
-                sig_desc = clinical_sig.get('description', '').lower()
-            else:
-                sig_desc = str(clinical_sig).lower()
+            title = doc.get('title', '') or ''
+            if 'NM_000518' not in title:
+                return None
+
+            sig_desc = self._clinical_significance_text(doc)
+            if not sig_desc:
+                return None
 
             # Skip ambiguous/conflicting significance upfront
             skip_terms = ['conflicting', 'uncertain', 'not provided', 'other']
             if any(term in sig_desc for term in skip_terms):
                 return None
 
-            # Determine label from clean significance
-            if 'pathogenic' in sig_desc and 'benign' not in sig_desc:
+            path_hit = 'pathogenic' in sig_desc
+            ben_hit = 'benign' in sig_desc
+            if path_hit and ben_hit:
+                return None
+            if path_hit:
                 label = 1
                 variant_type = 'ClinVar_pathogenic'
-            elif 'benign' in sig_desc and 'pathogenic' not in sig_desc:
+            elif ben_hit:
                 label = 0
                 variant_type = 'ClinVar_benign'
             else:
-                return None  # Skip dual annotations
+                return None
 
             # Try to extract HGVS coding notation (e.g., c.20A>T)
             hgvs_c = ''
@@ -249,6 +350,9 @@ class ClinVarDataLoader:
                         hgvs_c = cdna_change
                         break
 
+            if not _EXONIC_SNV.match(hgvs_c or ''):
+                return None
+
             # Extract the CDS position from HGVS c. notation
             pos_match = re.search(r'c\.(\d+)', hgvs_c)
             if pos_match:
@@ -257,32 +361,35 @@ class ClinVarDataLoader:
             else:
                 cds_pos_0indexed = -1
 
-            # Generate a sequence context around the variant
-            if 0 <= cds_pos_0indexed < len(self.HBB_REFERENCE):
-                alt_match = re.search(r'>([ATCG])$', hgvs_c)
-                alt_base = alt_match.group(1) if alt_match else None
+            # HBB_REFERENCE is genomic starting at the ATG; only CDS coordinates
+            # 1..EXON1_END-1 align 1:1 with indices 0..EXON1_END-2 in this string.
+            # Later exons live at different offsets; skip them until a full CDS map exists.
+            if not (0 <= cds_pos_0indexed < self.EXON1_END):
+                return None
 
-                if alt_base and alt_base != self.HBB_REFERENCE[cds_pos_0indexed]:
-                    seq = self._create_variant_sequence(
-                        position=cds_pos_0indexed,
-                        alt_base=alt_base,
-                        context_size=100,
-                        context_jitter=10,
-                        background_snp_rate=0.002,
-                        protected_positions=[cds_pos_0indexed]
-                    )
-                else:
-                    seq = None
-            else:
-                seq = None
+            alt_base: Optional[str] = None
+            alt_match = re.search(r'>([ATCG])$', hgvs_c)
+            if alt_match:
+                alt_base = alt_match.group(1)
+
+            # Generate a sequence context around the variant
+            seq = None
+            if (
+                alt_base
+                and 0 <= cds_pos_0indexed < len(self.HBB_REFERENCE)
+                and alt_base != self.HBB_REFERENCE[cds_pos_0indexed]
+            ):
+                seq = self._create_variant_sequence(
+                    position=cds_pos_0indexed,
+                    alt_base=alt_base,
+                    context_size=100,
+                    context_jitter=10,
+                    background_snp_rate=0.002,
+                    protected_positions=[cds_pos_0indexed]
+                )
 
             if seq is None:
-                # Fallback: use reference with some context if we can't build the variant
-                start = max(0, cds_pos_0indexed - 100) if cds_pos_0indexed >= 0 else 0
-                end = min(len(self.HBB_REFERENCE), start + 200)
-                seq = self.HBB_REFERENCE[start:end]
-                if len(seq) < 20:
-                    return None
+                return None
 
             return {
                 'variant_id': f'ClinVar_{doc.get("uid", "unknown")}',
@@ -292,13 +399,13 @@ class ClinVarDataLoader:
                 'hgvs_p': doc.get('protein_change', ''),
                 'position': cds_pos_0indexed if cds_pos_0indexed >= 0 else -1,
                 'ref': self.HBB_REFERENCE[cds_pos_0indexed] if 0 <= cds_pos_0indexed < len(self.HBB_REFERENCE) else '',
-                'alt': alt_base if 'alt_base' in dir() and alt_base else '',
+                'alt': alt_base or '',
                 'disease': title[:80] if title else '',
                 'clinical_significance': sig_desc,
                 'variant_type': variant_type,
                 'sequence': seq,
                 'label': label,
-                'version': 3,
+                'version': 4,
             }
         except Exception:
             return None
@@ -715,18 +822,74 @@ class ClinVarDataLoader:
 
         return df
 
+    @staticmethod
+    def _sanitize_labeled_frame(df: pd.DataFrame) -> pd.DataFrame:
+        """Drop invalid rows; uppercase DNA; require A/T/C/G only; dedupe sequences."""
+        if df.empty:
+            return df
+        out = df.dropna(subset=['sequence', 'label']).copy()
+        out['sequence'] = out['sequence'].astype(str).str.upper().str.strip()
+        out['label'] = pd.to_numeric(out['label'], errors='coerce')
+        out = out.dropna(subset=['label'])
+        out['label'] = out['label'].astype(int)
+        out = out[out['label'].isin((0, 1))]
+        out = out[out['sequence'].str.len() >= 40]
+        valid_pat = re.compile(r'^[ATCG]+$')
+        out = out[out['sequence'].str.match(valid_pat, na=False)]
+        before = len(out)
+        out = out.drop_duplicates(subset=['sequence'], keep='first')
+        dropped = before - len(out)
+        if dropped:
+            print(f"  Sanitize: dropped {dropped} duplicate sequences (same window text)")
+        return out.reset_index(drop=True)
+
+    def _maybe_balance_majority(
+        self,
+        df: pd.DataFrame,
+        *,
+        max_ratio: Optional[float],
+        random_state: int,
+    ) -> pd.DataFrame:
+        """
+        If benign >> pathogenic, downsample benign so n_benign <= max_ratio * n_path.
+        Keeps all pathogenic rows; avoids near-constant \"benign\" predictions.
+        """
+        if df.empty or max_ratio is None or max_ratio <= 0:
+            return df
+        n_pos = int((df['label'] == 1).sum())
+        n_neg = int((df['label'] == 0).sum())
+        if n_pos < 1 or n_neg < 1:
+            return df
+        cap = int(max_ratio * n_pos)
+        if n_neg <= cap:
+            return df
+        rng = np.random.RandomState(random_state)
+        pos_df = df[df['label'] == 1]
+        neg_df = df[df['label'] == 0].sample(n=cap, random_state=rng)
+        out = pd.concat([pos_df, neg_df], ignore_index=True)
+        out = out.sample(frac=1.0, random_state=rng).reset_index(drop=True)
+        print(
+            f"  Class balance: downsampled benign {n_neg} -> {cap} "
+            f"(cap = {max_ratio:.1f} x {n_pos} pathogenic)"
+        )
+        return out
+
     def get_training_data(
         self,
         val_split: float = 0.2,
         test_split: float = 0.2,
         random_state: int = 42,
-        use_cache: bool = True
+        use_cache: bool = True,
+        balance_majority_ratio: Optional[float] = 4.0,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Get stratified train/val/test datasets with no leakage.
 
         Args:
             use_cache: If True, use cached variants when available (faster).
+            balance_majority_ratio: If set (default ``4.0``), when benign count exceeds
+                this ratio times pathogenic count, downsample benign before splitting.
+                Pass ``None`` to keep raw counts (rely on loss ``pos_weight`` only).
 
         Returns:
             Tuple of (train_df, val_df, test_df)
@@ -737,23 +900,47 @@ class ClinVarDataLoader:
         df_labeled = df[df['label'] != -1].copy()
         df_vus = df[df['label'] == -1].copy()
 
-        # Stratified split by variant_type to ensure each split has all types
-        # First split: train+val vs test
-        train_val_df, test_df = train_test_split(
-            df_labeled,
-            test_size=test_split,
-            random_state=random_state,
-            stratify=df_labeled['variant_type']
+        df_labeled = self._sanitize_labeled_frame(df_labeled)
+        df_labeled = self._maybe_balance_majority(
+            df_labeled, max_ratio=balance_majority_ratio, random_state=random_state
         )
+        if df_labeled.empty:
+            raise ValueError(
+                "No labeled rows left after sanitization. Check sequence and label columns."
+            )
+
+        def _stratify_series(df: pd.DataFrame):
+            """Prefer variant_type when it is a small, balanced categorization; else label."""
+            if 'variant_type' not in df.columns:
+                return df['label']
+            vc = df['variant_type'].value_counts()
+            if len(vc) < 2 or vc.min() < 2 or len(vc) > 100:
+                return df['label']
+            return df['variant_type']
+
+        def _split_stratified(df: pd.DataFrame, test_sz: float, seed: int):
+            st = _stratify_series(df)
+            try:
+                return train_test_split(
+                    df,
+                    test_size=test_sz,
+                    random_state=seed,
+                    stratify=st,
+                )
+            except ValueError:
+                return train_test_split(
+                    df,
+                    test_size=test_sz,
+                    random_state=seed,
+                    shuffle=True,
+                )
+
+        # First split: train+val vs test
+        train_val_df, test_df = _split_stratified(df_labeled, test_split, random_state)
 
         # Second split: train vs val (from the train+val portion)
         relative_val = val_split / (1 - test_split)
-        train_df, val_df = train_test_split(
-            train_val_df,
-            test_size=relative_val,
-            random_state=random_state,
-            stratify=train_val_df['variant_type']
-        )
+        train_df, val_df = _split_stratified(train_val_df, relative_val, random_state)
 
         # Enforce zero leakage: remove any duplicate sequences across splits
         # (can occur when random background SNPs produce identical results)
@@ -785,4 +972,17 @@ class ClinVarDataLoader:
     def get_sickle_cell_examples(self) -> pd.DataFrame:
         """Get only sickle cell disease examples."""
         df = self.fetch_hbb_variants()
-        return df[df['mutation'] == 'E6V']
+        if "gene" in df.columns:
+            hbb = df[df["gene"].astype(str) == "HBB"]
+            if len(hbb) and "mutation" in hbb.columns:
+                m = hbb["mutation"].astype(str)
+                hit = m.str.contains("c.20A>T", regex=False) | m.str.contains(
+                    "Glu7Val", regex=False
+                )
+                if hit.any():
+                    return hbb[hit]
+        if "mutation" in df.columns:
+            classic = df[df["mutation"].astype(str) == "E6V"]
+            if len(classic):
+                return classic
+        return df.iloc[:0].copy()

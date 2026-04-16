@@ -1,0 +1,36 @@
+name: Bug report
+description: File a bug report
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill this out.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Commands, minimal script, or UI steps. Include OS and Python version.
+      placeholder: |
+        Python 3.12, Ubuntu 22.04
+        pip install -e ".[dev]"
+        pytest tests/ ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / traceback
+      description: Paste relevant output (redact secrets).
+    validations:
+      required: false

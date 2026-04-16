@@ -1,7 +1,6 @@
-import os
-import sys
+"""Manual BGPCA training smoke (one epoch). Not collected by pytest. See CONTRIBUTING.md."""
+
 import traceback
-os.environ["HF_HOME"] = r"D:\BloomDNABert\.cache\huggingface"
 
 try:
     from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper

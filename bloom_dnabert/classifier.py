@@ -11,6 +11,7 @@ Bloom filter hits and DNABERT token representations, using cross-attention
 with Bloom-derived attention biases for knowledge-guided classification.
 """
 
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,6 +23,7 @@ from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
 
 from .bloom_attention_bridge import BloomGuidedClassifier
+from .sequence_plausibility import assess_sequence_genomic_plausibility
 
 
 class HybridClassifier(nn.Module):
@@ -282,49 +284,66 @@ class HybridClassifierPipeline:
         print(f"  Gradient clipping: {max_grad_norm}")
         print(f"  Early stopping patience: {patience}")
         print(f"  Device: {self.device}")
-        
+        batch_log_interval = max(1, min(50, n_batches // 15))
+
         for epoch in range(epochs):
             self.model.train()
             epoch_loss = 0.0
             epoch_correct = 0
-            
+
+            print(
+                f"\nEpoch {epoch + 1}/{epochs} — training ({n_batches} batches, "
+                f"log every {batch_log_interval})…",
+                flush=True,
+            )
+            sys.stdout.flush()
+
             indices = torch.randperm(n_samples)
-            
+
             for i in range(n_batches):
                 start_idx = i * batch_size
                 end_idx = min(start_idx + batch_size, n_samples)
                 batch_indices = indices[start_idx:end_idx]
-                
+
                 batch_bloom = train_bloom[batch_indices].to(self.device)
                 batch_dnabert = train_dnabert[batch_indices].to(self.device)
                 batch_labels = train_labels_t[batch_indices].to(self.device)
-                
+
                 optimizer.zero_grad()
                 outputs = self.model(batch_dnabert, batch_bloom).squeeze()
                 loss = criterion(outputs, batch_labels)
-                
+
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
                 optimizer.step()
-                
+
                 epoch_loss += loss.item() * len(batch_indices)
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 epoch_correct += (preds == batch_labels).sum().item()
-            
+
+                if i == 0 or (i + 1) % batch_log_interval == 0 or (i + 1) == n_batches:
+                    print(
+                        f"  batch {i + 1}/{n_batches} — loss {loss.item():.4f}",
+                        flush=True,
+                    )
+                    sys.stdout.flush()
+
             scheduler.step()
-            
+
             avg_loss = epoch_loss / n_samples
             avg_acc = epoch_correct / n_samples
             history['train_loss'].append(avg_loss)
             history['train_acc'].append(avg_acc)
-            
+
             if val_sequences is not None:
+                print("  running validation…", flush=True)
+                sys.stdout.flush()
                 val_loss, val_acc = self._evaluate(
                     val_bloom, val_dnabert, val_labels_t, criterion
                 )
                 history['val_loss'].append(val_loss)
                 history['val_acc'].append(val_acc)
-                
+
                 # Early stopping check
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -332,21 +351,26 @@ class HybridClassifierPipeline:
                     patience_counter = 0
                 else:
                     patience_counter += 1
-                
-                if (epoch + 1) % 5 == 0:
-                    lr = scheduler.get_last_lr()[0]
-                    print(f"Epoch {epoch+1}/{epochs} - "
-                          f"Loss: {avg_loss:.4f}, Acc: {avg_acc:.4f}, "
-                          f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
-                          f"LR: {lr:.6f}")
-                
+
+                lr = scheduler.get_last_lr()[0]
+                print(
+                    f"Epoch {epoch + 1}/{epochs} — "
+                    f"train loss {avg_loss:.4f}, acc {avg_acc:.4f} — "
+                    f"val loss {val_loss:.4f}, val acc {val_acc:.4f} — "
+                    f"lr {lr:.6f}",
+                    flush=True,
+                )
+
                 if patience_counter >= patience:
                     print(f"\nEarly stopping at epoch {epoch+1} "
                           f"(no val loss improvement for {patience} epochs)")
                     break
             else:
-                if (epoch + 1) % 5 == 0:
-                    print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Acc: {avg_acc:.4f}")
+                print(
+                    f"Epoch {epoch + 1}/{epochs} — "
+                    f"train loss {avg_loss:.4f}, acc {avg_acc:.4f}",
+                    flush=True,
+                )
         
         # Restore best model if we have validation
         if best_model_state is not None:
@@ -424,11 +448,13 @@ class HybridClassifierPipeline:
         with torch.no_grad():
             output = self.model(dnabert_emb, bloom_feat)
             prob = torch.sigmoid(output).item()
-        
+
+        plaus = assess_sequence_genomic_plausibility(sequence)
         return {
             'probability': prob,
             'prediction': 'Pathogenic' if prob > 0.5 else 'Benign',
-            'confidence': prob if prob > 0.5 else (1 - prob)
+            'confidence': prob if prob > 0.5 else (1 - prob),
+            'sequence_plausibility': plaus,
         }
     
     def evaluate(self, sequences: list, labels: list) -> Dict[str, float]:
@@ -718,11 +744,19 @@ class BloomGuidedPipeline:
         print(f"  Early stopping patience: {patience}")
         print(f"  Optimizer: AdamW + CosineAnnealing")
         print(f"  Device: {self.device}")
+        batch_log_interval = max(1, min(50, n_batches // 15))
 
         for epoch in range(epochs):
             self.model.train()
             epoch_loss = 0.0
             epoch_correct = 0
+
+            print(
+                f"\nEpoch {epoch + 1}/{epochs} — training ({n_batches} batches, "
+                f"log every {batch_log_interval})…",
+                flush=True,
+            )
+            sys.stdout.flush()
 
             indices = torch.randperm(n_samples)
 
@@ -748,6 +782,13 @@ class BloomGuidedPipeline:
                 preds = (torch.sigmoid(outputs) > 0.5).float()
                 epoch_correct += (preds == b_labels).sum().item()
 
+                if i == 0 or (i + 1) % batch_log_interval == 0 or (i + 1) == n_batches:
+                    print(
+                        f"  batch {i + 1}/{n_batches} — loss {loss.item():.4f}",
+                        flush=True,
+                    )
+                    sys.stdout.flush()
+
             scheduler.step()
 
             avg_loss = epoch_loss / n_samples
@@ -756,6 +797,8 @@ class BloomGuidedPipeline:
             history['train_acc'].append(avg_acc)
 
             if val_sequences is not None:
+                print("  running validation…", flush=True)
+                sys.stdout.flush()
                 val_loss, val_acc = self._evaluate(
                     val_hidden, val_bloom_sig, val_bloom_sum, val_labels_t, criterion
                 )
@@ -772,21 +815,25 @@ class BloomGuidedPipeline:
                 else:
                     patience_counter += 1
 
-                if (epoch + 1) % 5 == 0:
-                    lr = scheduler.get_last_lr()[0]
-                    print(f"Epoch {epoch+1}/{epochs} - "
-                          f"Loss: {avg_loss:.4f}, Acc: {avg_acc:.4f}, "
-                          f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, "
-                          f"LR: {lr:.6f}")
+                lr = scheduler.get_last_lr()[0]
+                print(
+                    f"Epoch {epoch + 1}/{epochs} — "
+                    f"train loss {avg_loss:.4f}, acc {avg_acc:.4f} — "
+                    f"val loss {val_loss:.4f}, val acc {val_acc:.4f} — "
+                    f"lr {lr:.6f}",
+                    flush=True,
+                )
 
                 if patience_counter >= patience:
                     print(f"\nEarly stopping at epoch {epoch+1} "
                           f"(no val loss improvement for {patience} epochs)")
                     break
             else:
-                if (epoch + 1) % 5 == 0:
-                    print(f"Epoch {epoch+1}/{epochs} - "
-                          f"Loss: {avg_loss:.4f}, Acc: {avg_acc:.4f}")
+                print(
+                    f"Epoch {epoch + 1}/{epochs} — "
+                    f"train loss {avg_loss:.4f}, acc {avg_acc:.4f}",
+                    flush=True,
+                )
 
         # Restore best model if we have validation
         if best_model_state is not None:
@@ -873,10 +920,12 @@ class BloomGuidedPipeline:
             output = self.model(hidden_t, bloom_sig_t, bloom_sum_t)
             prob = torch.sigmoid(output).item()
 
+        plaus = assess_sequence_genomic_plausibility(sequence)
         return {
             'probability': prob,
             'prediction': 'Pathogenic' if prob > 0.5 else 'Benign',
-            'confidence': prob if prob > 0.5 else (1 - prob)
+            'confidence': prob if prob > 0.5 else (1 - prob),
+            'sequence_plausibility': plaus,
         }
 
     def predict_with_uncertainty(
@@ -907,12 +956,14 @@ class BloomGuidedPipeline:
         prob = mean_pred.item()
         unc = uncertainty.item()
 
+        plaus = assess_sequence_genomic_plausibility(sequence)
         return {
             'probability': prob,
             'prediction': 'Pathogenic' if prob > 0.5 else 'Benign',
             'confidence': prob if prob > 0.5 else (1 - prob),
             'uncertainty': unc,
-            'uncertainty_level': 'Low' if unc < 0.05 else ('Medium' if unc < 0.15 else 'High')
+            'uncertainty_level': 'Low' if unc < 0.05 else ('Medium' if unc < 0.15 else 'High'),
+            'sequence_plausibility': plaus,
         }
 
     def predict_with_interpretability(
@@ -946,6 +997,7 @@ class BloomGuidedPipeline:
 
         prob = torch.sigmoid(result['logits']).item()
 
+        plaus = assess_sequence_genomic_plausibility(sequence)
         return {
             'probability': prob,
             'prediction': 'Pathogenic' if prob > 0.5 else 'Benign',
@@ -953,7 +1005,8 @@ class BloomGuidedPipeline:
             'position_importance': result['position_importance'].squeeze(0).cpu().numpy(),
             'cross_attn_weights': [w.squeeze(0).cpu().numpy() for w in result['cross_attn_weights']],
             'gate_values': result['gate_values'].squeeze(0).cpu().numpy(),
-            'bloom_positional_signal': bloom_sig_np
+            'bloom_positional_signal': bloom_sig_np,
+            'sequence_plausibility': plaus,
         }
 
     def evaluate(self, sequences: list, labels: list) -> Dict[str, float]:

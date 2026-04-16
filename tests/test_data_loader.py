@@ -1,14 +1,45 @@
 """Tests for ClinVarDataLoader and data quality."""
 
-import pytest
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from bloom_dnabert.data_loader import ClinVarDataLoader, CODON_TABLE
+import pytest
+
+_ROOT = Path(__file__).resolve().parents[1]
+_spec = importlib.util.spec_from_file_location(
+    "bloom_data_loader",
+    _ROOT / "bloom_dnabert" / "data_loader.py",
+)
+_dl = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(_dl)
+ClinVarDataLoader = _dl.ClinVarDataLoader
+CODON_TABLE = _dl.CODON_TABLE
+DataSourceError = _dl.DataSourceError
 
 
 @pytest.fixture
 def data_loader(tmp_path):
     return ClinVarDataLoader(cache_dir=str(tmp_path), random_seed=42)
+
+
+class TestDataSourceResolution:
+    def test_fetch_raises_without_sources_or_network(self, tmp_path, monkeypatch):
+        loader = ClinVarDataLoader(cache_dir=str(tmp_path), random_seed=42)
+        monkeypatch.setattr(loader, "_fetch_clinvar_variants", lambda: None)
+        with pytest.raises(DataSourceError, match="No training variant data"):
+            loader.fetch_hbb_variants()
+
+    def test_fetch_allows_synthetic_when_enabled(self, tmp_path, monkeypatch):
+        loader = ClinVarDataLoader(
+            cache_dir=str(tmp_path), random_seed=42, allow_synthetic=True
+        )
+        monkeypatch.setattr(loader, "_fetch_clinvar_variants", lambda: None)
+        df = loader.fetch_hbb_variants()
+        assert len(df) > 0
+        assert (df["label"] != -1).any()
 
 
 class TestReferenceSequence:
@@ -137,7 +168,33 @@ class TestClinVarParsing:
         result = data_loader._parse_clinvar_record({})
         assert result is None
 
+    def test_parse_uses_germline_classification_when_clinical_sig_absent(self, data_loader):
+        """NCBI ClinVar eSummary often omits clinical_significance; germline_classification holds the label."""
+        doc = {
+            'uid': '4795169',
+            'title': 'NM_000518.5(HBB):c.20A>T (p.Glu7Val)',
+            'clinical_significance': None,
+            'germline_classification': {'description': 'Likely pathogenic'},
+            'variation_set': [{'cdna_change': 'c.20A>T'}],
+            'protein_change': 'E7V',
+        }
+        result = data_loader._parse_clinvar_record(doc)
+        assert result is not None
+        assert result['label'] == 1
+        assert result['hgvs_c'] == 'c.20A>T'
 
+
+@pytest.fixture
+def _synthetic_fetch_only(monkeypatch):
+    """Avoid live ClinVar in split tests (slow + rate limits)."""
+
+    def _fake_fetch(self, force_download: bool = False):
+        return ClinVarDataLoader._generate_synthetic_dataset(self)
+
+    monkeypatch.setattr(ClinVarDataLoader, 'fetch_hbb_variants', _fake_fetch)
+
+
+@pytest.mark.usefixtures("_synthetic_fetch_only")
 class TestTrainValTestSplit:
     def test_returns_three_splits(self, data_loader):
         train_df, val_df, test_df = data_loader.get_training_data()

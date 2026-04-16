@@ -2,6 +2,10 @@
 
 A hybrid system combining **Bloom filters** for fast pathogenic k-mer detection with **DNABERT-2** embeddings for variant classification, featuring the novel **Bloom-Guided Positional Cross-Attention (BGPCA)** architecture for position-aware cross-modal fusion with uncertainty estimation.
 
+**This repository is a research and education codebase, not a medical device.** Outputs are not validated for clinical diagnosis or treatment. See [Disclaimer](#disclaimer) below.
+
+**Documentation map:** This README is the main manual. [DATASETS.md](DATASETS.md) covers ClinVar sources, file formats, and build scripts. [CONTRIBUTING.md](CONTRIBUTING.md) describes development setup, tests, and root-level smoke scripts. [QUICKSTART.md](QUICKSTART.md) and [PROJECT_FILES_GUIDE.md](PROJECT_FILES_GUIDE.md) provide shorter orientation.
+
 ## Key Features
 
 - **BGPCA Architecture (Novel)**: Cross-attention where Bloom filter signals serve as attention biases
@@ -16,8 +20,8 @@ A hybrid system combining **Bloom filters** for fast pathogenic k-mer detection 
 - **K-Fold Cross-Validation**: Reliable performance estimates for small datasets
 - **Class-Weighted Loss**: Handles imbalanced pathogenic/benign ratios
 - **Calibration Analysis**: ECE/MCE metrics to verify prediction reliability
-- **ClinVar Integration**: Real variant data from NCBI with synthetic fallback
-- **Interactive Web Dashboard**: Gradio-based UI for real-time analysis
+- **ClinVar integration**: *HBB*-focused live API, curated CSVs, or optional **large pan-gene GRCh38 SNV** windows from `scripts/build_clinvar_pan_dataset.py` (see [DATASETS.md](DATASETS.md)). Training **does not** fall back to synthetic data unless you explicitly opt in (`allow_synthetic=True` or `BLOOM_DNABERT_ALLOW_SYNTHETIC=1`) for tests or experiments.
+- **Interactive web dashboard**: Gradio UI for training and sequence analysis
 
 ## Novel Contribution: BGPCA Architecture
 
@@ -112,35 +116,86 @@ DNA Sequence
 | Uncertainty | No | MC Dropout (20 samples) |
 | Interpretability | Attention heatmap | Position importance, cross-attn weights, gate values |
 
-## Quick Start
+## Architecture overview (code map)
 
-### 1. Install Dependencies
+| Concern | Module | Role |
+|--------|--------|------|
+| Multi-scale Bloom filter + k-mer hits | [bloom_dnabert/bloom_filter.py](bloom_dnabert/bloom_filter.py) | O(1) pathogenic k-mer checks; positional signal for BGPCA |
+| DNABERT-2 encode + hidden states | [bloom_dnabert/dnabert_wrapper.py](bloom_dnabert/dnabert_wrapper.py) | Transformer embeddings; supports offline cache env vars |
+| Baseline hybrid MLP | [bloom_dnabert/classifier.py](bloom_dnabert/classifier.py) (`HybridClassifierPipeline`) | Concat(Bloom summary, pooled DNABERT) → MLP |
+| BGPCA stack | [bloom_dnabert/bloom_attention_bridge.py](bloom_dnabert/bloom_attention_bridge.py), [bloom_dnabert/classifier.py](bloom_dnabert/classifier.py) (`BloomGuidedPipeline`) | Cross-attention with Bloom bias, gated fusion, MC dropout |
+| Training data | [bloom_dnabert/data_loader.py](bloom_dnabert/data_loader.py) (`ClinVarDataLoader`, `DataSourceError`) | CSV / API resolution; stratified splits without sequence leakage |
+| Sequence priors / plausibility | [bloom_dnabert/sequence_plausibility.py](bloom_dnabert/sequence_plausibility.py) | Trinucleotide context helpers (see bundled JSON background) |
+| Web UI | [app.py](app.py) | Gradio dashboard |
+
+Bloom filters are seeded from known *HBB* pathogenic k-mers for this project’s scope; using the same seeds on pan-gene CSV training is a documented design choice (see [DATASETS.md](DATASETS.md)).
+
+## Data sources and resolution order
+
+The loader resolves variants in this order (under default `cache_dir=` `data/`):
+
+| Priority | File / source | Notes |
+|----------|----------------|-------|
+| 1 | `data/clinvar_pan_grch38_snvs.csv` | Built with `scripts/build_clinvar_pan_dataset.py` + GRCh38 FASTA (large; ignored by git by default). |
+| 2 | `data/hbb_clinvar_refined.csv` | Small *HBB* exonic SNV slice; build with `scripts/build_hbb_clinvar_dataset.py` (requires network). |
+| 3 | `data/hbb_variants.csv` | Cached ClinVar API pull; valid if `version >= 4`. |
+| 4 | Live NCBI ClinVar (eutils) | Fetched when no usable CSV exists; subject to rate limits. |
+
+If none of the above produce rows and synthetic mode is **off**, `ClinVarDataLoader.fetch_hbb_variants()` raises `DataSourceError` with paths and pointers to [DATASETS.md](DATASETS.md).
+
+**First-time setup for training:** run `python scripts/build_hbb_clinvar_dataset.py` (or place a compatible CSV). The pan-genome table is optional and needs a local reference FASTA; see [DATASETS.md](DATASETS.md).
+
+## Quick start
+
+### 1. Install
+
+**Option A — editable install (recommended for contributors):**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+```
+
+**Option B — requirements file only:**
 
 ```bash
 pip install -r requirements.txt
+pip install pytest   # optional, for running tests
 ```
 
-### 2. Launch Web Dashboard
+Python **3.10+** is supported (CI exercises 3.11 and 3.12).
+
+### 2. Hugging Face cache and optional `HF_HOME`
+
+Model weights for `zhihan1996/DNABERT-2-117M` download into the Hugging Face cache. You do **not** need to set `HF_HOME` unless you want a custom location (e.g. a larger disk). Example:
+
+```bash
+export HF_HOME="$HOME/.cache/huggingface"
+```
+
+For air-gapped use, pre-populate the cache and set `HF_HUB_OFFLINE=1` as described in [bloom_dnabert/dnabert_wrapper.py](bloom_dnabert/dnabert_wrapper.py).
+
+### 3. Launch the web dashboard
 
 ```bash
 python app.py
 ```
 
-The dashboard will be available at `http://localhost:7860`
+The UI is served at `http://127.0.0.1:7860` by default. Equivalent entry point: `python launch_dashboard.py` (UTF-8 console tweaks on Windows only).
 
-### 3. Using the Dashboard
+**Inference** loads Bloom + DNABERT without training data. **Training** inside the app requires real variant rows per the data table above; otherwise the loader raises `DataSourceError`.
 
-1. **Train the Model**:
-   - Go to the "Train Model" tab
-   - Select architecture: **BGPCA (Novel)** or Baseline
-   - Adjust epochs (default: 30)
-   - Click "Train Model"
+### 4. Using the dashboard
 
-2. **Analyze Sequences**:
-   - Go to "Analyze Sequence" tab
-   - Enter a DNA sequence or load an example
-   - Click "Analyze Sequence"
-   - View prediction, uncertainty, attention heatmap, and Bloom filter hits
+1. **Train the model** (requires data): open the **Train Model** tab, choose **BGPCA** or **Baseline**, set epochs, click **Train Model**.
+2. **Analyze sequences**: open **Analyze Sequence**, paste ATCG sequence (length limits enforced in code), run analysis, inspect probability, uncertainty, attention, and Bloom hits.
+
+### 5. Triton compatibility (DNABERT-2)
+
+Upstream DNABERT-2 may import Flash attention paths that expect **Triton**. This repo ships [bloom_dnabert/triton_stub.py](bloom_dnabert/triton_stub.py) and [create_triton_stub.py](create_triton_stub.py) so CPU / non-Triton PyTorch can run the model safely. You normally do not need to run the script unless your environment still pulls incompatible Flash kernels; see comments in `dnabert_wrapper.py`.
+
+A shorter checklist lives in [QUICKSTART.md](QUICKSTART.md).
 
 ## Architecture Components
 
@@ -253,31 +308,43 @@ signal = bloom_filter.get_positional_signal("CACGTGGTCTACCCCTGAGGAG")
 # shape: [seq_len, 3] -- one channel per k-mer scale (k=6,8,10)
 ```
 
-## Project Structure
+## Project structure
 
 ```
 BloomDNABert/
-+-- app.py                              # Gradio web dashboard (both architectures)
-+-- requirements.txt                    # Pinned dependency versions
-+-- LICENSE                             # MIT License
-+-- README.md                           # This file
++-- app.py                         # Gradio web dashboard
++-- launch_dashboard.py            # Thin launcher (imports app.main)
++-- pyproject.toml                 # Package metadata + optional [dev] deps (pytest)
++-- requirements.txt               # Runtime pins (mirrors pyproject dependencies)
++-- LICENSE                        # MIT
++-- README.md                      # This manual
++-- DATASETS.md                    # Data provenance and build commands
++-- CONTRIBUTING.md                # Dev setup, tests, smoke scripts
++-- CODE_OF_CONDUCT.md
++-- SECURITY.md
++-- .github/workflows/ci.yml       # pytest on PRs
 +-- bloom_dnabert/
-|   +-- __init__.py                     # Package exports
-|   +-- bloom_filter.py                 # Multi-scale Bloom filter + positional signal
-|   +-- dnabert_wrapper.py              # DNABERT-2 wrapper + per-token hidden states
-|   +-- bloom_attention_bridge.py       # BGPCA architecture (NOVEL)
-|   +-- classifier.py                   # Both pipelines (Baseline + BGPCA)
-|   +-- data_loader.py                  # ClinVar API + synthetic data generation
-|   +-- visualizer.py                   # Attention heatmap generation
-+-- tests/
-|   +-- conftest.py                     # Test configuration and mock setup
-|   +-- test_bloom_filter.py            # Bloom filter unit tests
-|   +-- test_bloom_attention_bridge.py  # BGPCA architecture tests
-|   +-- test_classifier.py             # Classifier + input validation tests
-|   +-- test_data_loader.py            # Data quality + no-leakage tests
-+-- data/
-    +-- hbb_variants.csv                # ClinVar + synthetic variant dataset
+|   +-- __init__.py
+|   +-- bloom_filter.py
+|   +-- dnabert_wrapper.py
+|   +-- bloom_attention_bridge.py  # BGPCA layers
+|   +-- classifier.py              # Baseline + BGPCA pipelines
+|   +-- data_loader.py             # ClinVar CSV/API; opt-in synthetic for tests
+|   +-- visualizer.py
+|   +-- sequence_plausibility.py
+|   +-- triton_stub.py             # Safe path when Triton is unavailable
+|   +-- clinvar_pan.py
+|   +-- human_trinuc_bg.json
++-- scripts/
+|   +-- build_hbb_clinvar_dataset.py
+|   +-- build_clinvar_pan_dataset.py
++-- tests/                         # pytest collection (mocks heavy DL stack where needed)
++-- data/                          # Gitignored large files; see DATASETS.md
+    +-- (optional) hbb_clinvar_refined.csv, hbb_variants.csv
+    +-- (optional, large) clinvar_pan_grch38_snvs.csv, refs/hg38.fa, ...
 ```
+
+Root-level `test_system.py`, `test_train.py`, and `test_end_to_end.py` are **manual smoke scripts**, not pytest tests ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Scientific Background
 
@@ -298,20 +365,29 @@ BloomDNABert/
 
 ## Limitations
 
-- ClinVar integration supplements synthetic data; full clinical-grade training requires larger curated datasets
-- DNABERT-2 max sequence length: ~2048 tokens (BPE)
-- Bloom filters have false positives (tunable, currently 0.1%)
-- BGPCA adds computational overhead vs baseline (cross-attention is O(n^2))
-- Windows: Uses PyTorch attention (no Triton acceleration)
+- Training quality depends on real labels (ClinVar CSV/API or pan-genome table); synthetic data is **not** a default training source.
+- Not a clinical-grade or regulatory-validated system; independent validation would be required for any diagnostic use.
+- DNABERT-2 practical context length is limited by model max length (on the order of **~512–2048** tokens depending on tokenizer settings; see wrapper and model card).
+- Bloom filters have false positives (error rate configurable; dashboard uses a fixed capacity/error tradeoff in code).
+- BGPCA is heavier than the baseline (sequence-length-dependent attention cost).
+- Windows/macOS/Linux CPU paths rely on PyTorch attention implementations; GPU Triton kernels are environment-dependent.
 
 ## Testing
 
-Run the test suite (57 tests covering all components):
+Automated tests live under `tests/` and mock Hugging Face / Gradio where appropriate so CI does not download multi-gigabyte weights.
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+pip install -e ".[dev]"
+pytest tests/ -q
 ```
+
+For full-stack manual checks with real weights and optional live data, see [CONTRIBUTING.md](CONTRIBUTING.md) (root smoke scripts).
+
+## Community
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — pull requests, local setup, smoke scripts
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md) — responsible disclosure
 
 ## Future Work
 
@@ -326,13 +402,14 @@ python -m pytest tests/ -v
 
 ## Citation
 
+If you use this software, please cite the repository and the underlying DNABERT-2 model (see the [model card](https://huggingface.co/zhihan1996/DNABERT-2-117M)). Replace maintainer names in `author` when you publish a paper or Zenodo archive.
+
 ```bibtex
-@software{bgpca_bloom_dnabert_2026,
-  title={Bloom-Guided Positional Cross-Attention for DNA Variant Classification},
-  author={Your Name},
-  year={2026},
-  note={A novel architecture bridging probabilistic data structures with neural
-        attention mechanisms for position-aware cross-modal variant classification}
+@software{bloom_dnabert,
+  title        = {BloomDNABert: Bloom Filters and {DNABERT-2} for Variant Sequence Analysis with {BGPCA}},
+  author       = {BloomDNABert contributors},
+  year         = {2026},
+  note         = {Research software; BGPCA architecture. Add repository URL or Zenodo DOI when you publish.}
 }
 ```
 

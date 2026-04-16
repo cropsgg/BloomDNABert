@@ -13,19 +13,15 @@ Supports two architectures:
 import os
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
-# Override huggingface cache directory to use D drive (C drive is full)
-os.environ["HF_HOME"] = r"D:\BloomDNABert\.cache\huggingface"
-
 import gradio as gr
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import sys
 import socket
 
 from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper, HybridClassifier, AttentionVisualizer
 from bloom_dnabert.classifier import HybridClassifierPipeline, BloomGuidedPipeline
-from bloom_dnabert.data_loader import ClinVarDataLoader
+from bloom_dnabert.data_loader import ClinVarDataLoader, DataSourceError
 
 
 # ─── Design System CSS ────────────────────────────────────────────────────────
@@ -335,7 +331,7 @@ TRAIN_HEADER = """
 FOOTER_HTML = """
 <div style="text-align:center;padding:1.5rem 0;border-top:1px solid #334155;margin-top:2rem">
   <span style="font-size:0.8rem;color:#64748B;">
-    BloomDNABERT Enterprise Dashboard &nbsp;·&nbsp; BGPCA Core v2.0
+    BloomDNABert &nbsp;·&nbsp; open-source research dashboard (BGPCA + baseline)
   </span>
 </div>
 """
@@ -435,6 +431,12 @@ class VariantAnalysisDashboard:
             self.trained = True
 
             progress(1.0, desc="Training complete!")
+        except DataSourceError as e:
+            return (
+                "### Training data required\n\n"
+                f"{e}\n\n"
+                "See **DATASETS.md** in the repository for how to build or download CSVs."
+            )
         except Exception as e:
             return f"### ❌  Training Failed\n\n**Error:** `{str(e)}`\n\nCheck console output for details."
 
@@ -535,6 +537,20 @@ class VariantAnalysisDashboard:
 > Gate > 0.5 → model trusts **DNABERT** more
 > Gate < 0.5 → model trusts **Bloom filter** more
 """
+                    sq = result.get("sequence_plausibility")
+                    if sq:
+                        prediction_text += f"""
+
+### 📏  Sequence plausibility (statistical sanity check)
+
+| Property | Value |
+|:---------|------:|
+| Genomic plausibility (0–1) | `{sq['genomic_plausibility_score']:.3f}` |
+| P(statistically unlike human DNA) | `{sq['probability_statistically_spurious']:.1%}` |
+| Base diversity (entropy) | `{sq['base_diversity_score']:.3f}` |
+
+> This does **not** verify coordinates on GRCh38. It flags pasted or random strings whose k-mer usage or composition is unlike typical human genomic windows.
+"""
                 else:
                     result = self.active_pipeline.predict(sequence)
                     icon = "🔴" if "pathogenic" in result['prediction'].lower() else "🟢"
@@ -552,6 +568,20 @@ class VariantAnalysisDashboard:
 
 > Probability > 0.5 → **pathogenic** variant.
 > Model is trained specifically on HBB gene variants.
+"""
+                    sq = result.get("sequence_plausibility")
+                    if sq:
+                        prediction_text += f"""
+
+### 📏  Sequence plausibility (statistical sanity check)
+
+| Property | Value |
+|:---------|------:|
+| Genomic plausibility (0–1) | `{sq['genomic_plausibility_score']:.3f}` |
+| P(statistically unlike human DNA) | `{sq['probability_statistically_spurious']:.1%}` |
+| Base diversity (entropy) | `{sq['base_diversity_score']:.3f}` |
+
+> This does **not** verify coordinates on GRCh38. It flags pasted or random strings whose k-mer usage or composition is unlike typical human genomic windows.
 """
             else:
                 result = None
@@ -693,10 +723,9 @@ Bloom filter and attention visualisations are shown below regardless.
 
         with gr.Blocks(
             title="BloomDNABERT — Sickle Cell Variant Classifier",
+            theme=theme,
+            css=CUSTOM_CSS,
         ) as interface:
-            # Store theme/css so launch() can inject them (Gradio 6+)
-            interface._theme = theme
-            interface._css = CUSTOM_CSS
 
             gr.HTML(NAVBAR_HTML)
             gr.HTML(HERO_HTML)
@@ -927,12 +956,7 @@ in a cross-attention mechanism with DNABERT's per-token hidden states.
     def launch(self, **kwargs):
         """Launch the dashboard."""
         interface = self.create_interface()
-        # Gradio 6+: theme and css are passed to launch(), not Blocks()
-        interface.launch(
-            theme=getattr(interface, '_theme', None),
-            css=getattr(interface, '_css', None),
-            **kwargs
-        )
+        interface.launch(**kwargs)
 
 
 def _find_free_port(start: int = 7860, end: int = 7870) -> int:
@@ -961,8 +985,10 @@ def main():
     dashboard = VariantAnalysisDashboard()
     dashboard.launch(
         share=False,
-        server_name="0.0.0.0",
+        server_name="127.0.0.1",
         server_port=port,
+        # Skip Gradio's HTTP probe of localhost (fails in some sandboxes / proxy setups).
+        _frontend=False,
     )
 
 

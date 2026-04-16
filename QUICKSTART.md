@@ -8,7 +8,7 @@ All components have been tested and are working correctly!
 
 1. **Bloom Filter Module** - Multi-scale k-mer matching (k=6, 8, 10)
 2. **DNABERT Wrapper** - DNABERT-2-117M with attention extraction
-3. **Data Loader** - Synthetic HBB variant dataset generator
+3. **Data Loader** - ClinVar-backed HBB variant loader (refined CSV + synthetic fallback)
 4. **Hybrid Classifier** - Neural network combining both features
 5. **Visualizer** - Interactive attention heatmaps
 6. **Web Dashboard** - Gradio interface for analysis
@@ -40,7 +40,7 @@ pipeline = HybridClassifierPipeline(bloom_filter, dnabert)
 # Train (first time only)
 from bloom_dnabert.data_loader import ClinVarDataLoader
 data_loader = ClinVarDataLoader()
-train_df, test_df = data_loader.get_training_data()
+train_df, val_df, test_df = data_loader.get_training_data()
 
 pipeline.train(
     train_sequences=train_df['sequence'].tolist(),

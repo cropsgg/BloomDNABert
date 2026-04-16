@@ -1,5 +1,8 @@
 """
-Test script to verify the Bloom-Enhanced DNABERT system
+Manual integration smoke test (not run by pytest).
+
+Loads real DNABERT weights and calls ClinVarDataLoader.get_training_data(); requires
+variant CSVs or network per DATASETS.md. See CONTRIBUTING.md for smoke scripts.
 """
 
 import sys
@@ -48,9 +51,10 @@ except Exception as e:
 print("\n3. Testing Data Loader...")
 try:
     data_loader = ClinVarDataLoader()
-    train_df, test_df = data_loader.get_training_data(test_split=0.2)
+    train_df, val_df, test_df = data_loader.get_training_data(test_split=0.2)
     print(f"   [OK] Data loader works")
     print(f"   [OK] Training samples: {len(train_df)}")
+    print(f"   [OK] Validation samples: {len(val_df)}")
     print(f"   [OK] Test samples: {len(test_df)}")
 except Exception as e:
     print(f"   [ERROR] {e}")

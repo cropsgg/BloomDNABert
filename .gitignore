@@ -1,5 +1,6 @@
 ## Python
 __pycache__/
+*.egg-info/
 *.py[cod]
 *$py.class
 .pytest_cache/
@@ -49,3 +50,10 @@ artifacts/
 .cache/
 cache/
 **/.cache/
+# Do not commit Hugging Face hub trees inside the repo; set HF_HOME or use ~/.cache/huggingface
+
+## Large / downloaded genomic data (keep small curated CSVs unignored if committed)
+data/refs/*.fa
+data/refs/*.fa.fai
+data/clinvar_variant_summary.txt.gz
+data/clinvar_pan_grch38_snvs.csv

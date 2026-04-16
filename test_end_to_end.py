@@ -1,6 +1,6 @@
-import os
+"""Manual pipeline smoke: Bloom + DNABERT + forward pass. Not pytest. See CONTRIBUTING.md."""
+
 import sys
-os.environ["HF_HOME"] = r"D:\BloomDNABert\.cache\huggingface"
 
 try:
     print("Initializing components...")
