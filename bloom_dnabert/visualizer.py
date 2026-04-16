@@ -115,7 +115,9 @@ class AttentionVisualizer:
             height=800,
             showlegend=False,
             title_x=0.5,
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -230,7 +232,9 @@ class AttentionVisualizer:
             showlegend=False,
             title_text="Nucleotide-Level Analysis with Pathogenic K-mer Detection",
             title_x=0.5,
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(t=80, b=50)
         )
         
@@ -281,7 +285,9 @@ class AttentionVisualizer:
             yaxis_title="Attention Importance",
             height=500,
             hovermode='x unified',
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -336,7 +342,9 @@ class AttentionVisualizer:
         fig.update_layout(
             title_text="Attention Patterns Across Layers",
             height=500,
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -439,16 +447,16 @@ class AttentionVisualizer:
             go.Table(
                 header=dict(
                     values=["Metric", "Value"],
-                    fill_color='#F1F5F9',
-                    font=dict(color='#0F172A', size=13),
-                    line_color='#E2E8F0'
+                    fill_color='rgba(15, 23, 42, 0.8)',
+                    font=dict(color='#F8FAFC', size=13),
+                    line_color='rgba(255,255,255,0.1)'
                 ),
                 cells=dict(
                     values=[[row[0] for row in stats_data], 
                                    [row[1] for row in stats_data]],
-                    fill_color='#FFFFFF',
-                    font=dict(color='#334155', size=12),
-                    line_color='#E2E8F0'
+                    fill_color='rgba(30, 41, 59, 0.5)',
+                    font=dict(color='#94A3B8', size=12),
+                    line_color='rgba(255,255,255,0.1)'
                 )
             ),
             row=2, col=2
@@ -498,7 +506,9 @@ class AttentionVisualizer:
             showlegend=False,
             title_text=f"Variant Analysis Dashboard - {prediction_result.get('prediction', 'Unknown') if prediction_result else 'Analysis'}",
             title_x=0.5,
-            template="plotly_white",
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(t=80, b=50)
         )
         

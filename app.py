@@ -34,24 +34,24 @@ CUSTOM_CSS = """
 
 /* ── Design tokens ── */
 :root {
-    --bg-base:        #F7F9FC;
-    --bg-surface:     #FFFFFF;
-    --bg-elevated:    #FFFFFF;
-    --bg-input:       #FFFFFF;
-    --border-subtle:  #E2E8F0;
-    --border-default: #CBD5E1;
-    --border-focus:   #3B82F6;
-    --blue:           #2563EB;
-    --cyan:           #0891B2;
-    --green:          #059669;
-    --purple:         #7C3AED;
-    --amber:          #D97706;
-    --red:            #DC2626;
-    --text-1:         #0F172A;
-    --text-2:         #475569;
+    --bg-base:        #0B1121;
+    --bg-surface:     #1E293B;
+    --bg-elevated:    #334155;
+    --bg-input:       #0F172A;
+    --border-subtle:  #334155;
+    --border-default: #475569;
+    --border-focus:   #60A5FA;
+    --blue:           #3B82F6;
+    --cyan:           #38BDF8;
+    --green:          #34D399;
+    --purple:         #8B5CF6;
+    --amber:          #FBBF24;
+    --red:            #F87171;
+    --text-1:         #F8FAFC;
+    --text-2:         #94A3B8;
     --text-3:         #64748B;
-    --shadow-card:    0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-    --shadow-hover:   0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+    --shadow-card:    0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+    --shadow-hover:   0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
     --radius-xl:      12px;
     --radius-lg:      8px;
     --radius-md:      6px;
@@ -74,7 +74,7 @@ footer { display: none !important; }
     align-items: center;
     justify-content: space-between;
     padding: 1rem 2rem;
-    background: #FFFFFF;
+    background: #0F172A;
     border-bottom: 1px solid var(--border-subtle);
     position: sticky; top: 0; z-index: 100;
 }
@@ -92,7 +92,7 @@ footer { display: none !important; }
     font-size: 0.7rem; font-weight: 600; letter-spacing: 0.5px;
     text-transform: uppercase; padding: 0.3rem 0.8rem;
     border-radius: 999px;
-    background: var(--bg-base);
+    background: var(--bg-surface);
     color: var(--text-2);
     border: 1px solid var(--border-subtle);
 }
@@ -100,7 +100,7 @@ footer { display: none !important; }
 /* ── Hero ── */
 #hero {
     padding: 2.5rem 2rem 2rem;
-    background: #FFFFFF;
+    background: #0F172A;
     border-bottom: 1px solid var(--border-subtle);
     text-align: center;
 }
@@ -117,7 +117,7 @@ footer { display: none !important; }
 
 /* ── Tabs ── */
 .tabs > .tab-nav {
-    background: #FFFFFF !important;
+    background: #0F172A !important;
     border-bottom: 1px solid var(--border-subtle) !important;
     padding: 0 1.5rem !important; gap: 0.5rem !important;
     margin-top: 0 !important;
@@ -171,7 +171,7 @@ footer { display: none !important; }
 }
 .output-panel h3, .prose h3, .md h3 {
     font-size: 1rem !important; font-weight: 600 !important;
-    color: var(--text-1) !important;
+    color: var(--cyan) !important; /* cyan for headers */
     border-bottom: 1px solid var(--border-subtle) !important;
     padding-bottom: 0.5rem !important; margin-bottom: 1rem !important;
 }
@@ -182,9 +182,9 @@ footer { display: none !important; }
     font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.85rem !important; padding: 0.15em 0.4em !important;
     border-radius: 4px !important;
-    background: var(--bg-base) !important;
+    background: var(--bg-input) !important;
     border: 1px solid var(--border-subtle) !important;
-    color: var(--blue) !important;
+    color: var(--cyan) !important;
 }
 .output-panel hr, .prose hr, .md hr {
     border-top: 1px solid var(--border-subtle) !important;
@@ -197,7 +197,7 @@ footer { display: none !important; }
     border: 1px solid var(--border-subtle);
 }
 .output-panel th, .prose th, .md th {
-    background: var(--bg-base) !important;
+    background: var(--bg-elevated) !important;
     color: var(--text-2) !important; font-weight: 600 !important;
     padding: 0.6rem 1rem !important;
     text-align: left;
@@ -227,7 +227,7 @@ textarea, input[type="text"] {
 }
 textarea:focus, input[type="text"]:focus {
     border-color: var(--border-focus) !important;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
     outline: none !important;
 }
 textarea::placeholder { color: var(--text-3) !important; font-family: 'Inter', sans-serif !important; }
@@ -333,7 +333,7 @@ TRAIN_HEADER = """
 """
 
 FOOTER_HTML = """
-<div style="text-align:center;padding:1.5rem 0;border-top:1px solid #E2E8F0;margin-top:2rem">
+<div style="text-align:center;padding:1.5rem 0;border-top:1px solid #334155;margin-top:2rem">
   <span style="font-size:0.8rem;color:#64748B;">
     BloomDNABERT Enterprise Dashboard &nbsp;·&nbsp; BGPCA Core v2.0
   </span>
@@ -583,54 +583,61 @@ Bloom filter and attention visualisations are shown below regardless.
         trace = f"## 🧪 Pipeline Execution Trace\n\n"
         
         # 1. Input
-        trace += f"### 1. Input Sequence\n"
-        trace += f"- **Length**: `{len(sequence)}` base pairs\n"
+        trace += f"### 1. Sequence Ingestion & Preprocessing\n"
+        trace += f"**Action:** The raw DNA sequence is ingested into the system. It is converted to uppercase and validated.\n"
+        trace += f"- **Length Analyzed**: `{len(sequence)}` base pairs\n"
         
         # 2. Bloom Filter
-        trace += f"\n### 2. Multi-Scale Bloom Filter Analysis\n"
+        trace += f"\n### 2. Multi-Scale Classical Bloom Filter Analysis\n"
+        trace += f"**Action:** The sequence is concurrently scanned by multiple probabilistic exact-match filters tuned to detect known pathogenic sickle-cell and thalassemia k-mers in native O(1) time.\n"
         features = self.bloom_filter.get_hit_features(sequence)
         for k in self.bloom_filter.k_sizes:
             count = features.get(f'hit_count_k{k}', 0)
             ratio = features.get(f'hit_ratio_k{k}', 0)
-            trace += f"- **k={k}**: `{count}` hits found (Hit Ratio: `{ratio:.4f}`)\n"
-        trace += f"- **Mean Hit Ratio**: `{features.get('mean_hit_ratio', 0):.4f}`\n"
+            trace += f"- **K-mer Window (k={k})**: Exact match probabilistic scanner found `{count}` pathogenic patterns. This creates a spatial density feature map marking exact mutated coordinates (Density Ratio: `{ratio:.4f}`).\n"
+        trace += f"- **Aggregated Spatial Density**: The mathematical mean of the feature maps across all window sizes is `{features.get('mean_hit_ratio', 0):.4f}`.\n"
         
         if not self.trained or self.active_pipeline is None:
-            trace += "\n> ⚠️ *Pipeline stops here because the model is not trained yet.*"
+            trace += "\n> ⚠️ *Pipeline Execution Halted: The neural architecture has not been initialized with trained weights.*"
             return trace
 
         # 3. DNABERT
-        trace += f"\n### 3. DNABERT-2 Transformer\n"
+        trace += f"\n### 3. Deep Contextual Feature Extraction (DNABERT-2)\n"
+        trace += f"**Action:** The string sequence is pipelined into the large DNABERT-2 Transformer encoder, leveraging multi-layer contextual Self-Attention to translate simple nucleotides into a high-dimensional vector space capturing deep biological semantics.\n"
         try:
             tokens = self.dnabert_wrapper.tokenizer.tokenize(sequence)
-            trace += f"- **Tokenization**: Sequence converted into `{len(tokens)}` BPE tokens.\n"
+            trace += f"- **Subword BPE Tokenization**: The contiguous sequence is algorithmically sectioned into `{len(tokens)}` specific genomic vocabulary tokens optimized by the BPE methodology.\n"
         except Exception:
             pass
         if is_bgpca:
-            trace += f"- **Feature Extraction**: Extracted per-token hidden states `[num_tokens, 768]`.\n"
+            trace += f"- **Dense Token Representation**: The DL engine maps the representation space, outputting full deep hidden states for every token `[num_tokens, 768]`. Because this is unpooled, exact spatial layout of the genetic code is retained for the next block.\n"
         else:
-            trace += f"- **Feature Extraction**: Extracted pooled embedding `[1, 768]`.\n"
+            trace += f"- **Pooled Representation**: The engine compresses the entire sequence into a single 1D scalar `[1, 768]`. Crucially, exact token spatial location geometry is destroyed in this process.\n"
 
         # 4. Fusion
-        trace += f"\n### 4. Cross-Modal Fusion ({self.active_model_name})\n"
+        trace += f"\n### 4. Cross-Modal Cognitive Fusion ({self.active_model_name})\n"
         if is_bgpca:
-            trace += f"- **Positional Encoding**: Bloom activations projected via 1D CNN.\n"
-            trace += f"- **Cross-Attention**: Applied Bloom-Guided Positional Cross-Attention.\n"
+            trace += f"**Action:** The BGPCA architecture reconciles the classical exact-match statistical data (Multi-scale Bloom maps) with the deep semantic representations (DNABERT) using a sophisticated trainable Cross-Attention block.\n"
+            trace += f"- **Coordination Projection**: The O(1) positional coordinate maps from the Bloom Filters are smoothed and mathematically projected into sequence dimensionality via a 1D Convolutional filter.\n"
+            trace += f"- **Guided Cross-Attention Topology**: The spatial Bloom signals act as Attention `Queries`, deliberately scanning and multiplying the DNABERT `Keys/Values` to radically prioritize contextual biological vectors that physically align with pathogenic algorithmic hits.\n"
             if interp is not None and 'gate_values' in interp:
                 gate_mean = interp['gate_values'].mean()
-                trace += f"- **Gated Fusion**: Calculated gate weight: `{gate_mean:.3f}`.\n"
-                trace += f"  - *(Note: {'>' if gate_mean > 0.5 else '<'} 0.5 indicates heavier reliance on {'DNABERT' if gate_mean > 0.5 else 'Bloom Filter'})*\n"
+                trace += f"- **Dynamic Arbitration Gate**: The network autonomously computes a scalar interpolation variable to govern trust between the classical and deep learning subsystems: `{gate_mean:.3f}`.\n"
+                trace += f"  - *Decision Result: The network intrinsically decides to rely {'>' if gate_mean > 0.5 else '<'} 50% on deep contextual features (DNABERT) compared to the classical exact matches (Bloom).* \n"
         else:
-            trace += f"- **Concatenation**: Combined 18-dim Bloom features with 768-dim DNABERT embedding.\n"
-            trace += f"- **MLP**: Passed 786-dim vector through 2-layer classifier.\n"
+            trace += f"**Action:** The baseline system executes a simplified unweighted vector append operation.\n"
+            trace += f"- **Fixed Vector Concatenation**: The 18-dimensional numeric hit summary from the Bloom filter is blindly appended end-to-end onto the 768-dimensional scalar output of DNABERT.\n"
+            trace += f"- **Information Bottleneck (MLP Layer)**: The resulting 786-dimensional flattened vector is passed through a basic 2-layer classifier. The model attempts to map the vector manually.\n"
 
         # 5. Output
-        trace += f"\n### 5. Final Classification\n"
+        trace += f"\n### 5. Probabilistic Variant Classification\n"
+        trace += f"**Action:** The fully synthesized representations are collapsed into a dual-class output node predicting the likelihood of the phenotype being pathogenic.\n"
         if result:
-            trace += f"- **Raw Probability (Pathogenic)**: `{result['probability']:.5f}`\n"
-            trace += f"- **Final Decision**: `{result['prediction'].upper()}`\n"
+            trace += f"- **Raw Sigmoid Density Probability**: `{result['probability']:.5f}` (Scale 0.0 - 1.0)\n"
+            trace += f"- **Binary Heuristic Threshold**: Evaluated against established boundaries to deduce final variant status: **`{result['prediction'].upper()}`**\n"
             if is_bgpca and 'uncertainty' in result:
-                trace += f"- **MC Dropout Uncertainty**: `{result['uncertainty']:.5f}` ({result['uncertainty_level']})\n"
+                trace += f"- **Stochastic Calibration (MC Dropout)**: The network ran 10 simultaneous stochastic forward passes with probabilistic neural dropout active to quantify Epistemic structural variance.\n"
+                trace += f"- **Uncertainty Rating**: Calculated standard deviation metric: `{result['uncertainty']:.5f}` | Confidence Status: **{result['uncertainty_level']}**\n"
                 
         return trace
 
@@ -667,21 +674,21 @@ Bloom filter and attention visualisations are shown below regardless.
             font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui"],
             font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace"],
         ).set(
-            body_background_fill              = "#F7F9FC",
-            body_background_fill_dark         = "#F7F9FC",
-            body_text_color                   = "#0F172A",
-            body_text_color_dark              = "#0F172A",
-            border_color_primary              = "#E2E8F0",
-            border_color_primary_dark         = "#E2E8F0",
-            block_background_fill             = "#FFFFFF",
-            block_background_fill_dark        = "#FFFFFF",
-            input_background_fill             = "#FFFFFF",
-            input_background_fill_dark        = "#FFFFFF",
-            button_primary_background_fill    = "#2563EB",
-            button_primary_background_fill_dark = "#2563EB",
+            body_background_fill              = "#0B1121",
+            body_background_fill_dark         = "#0B1121",
+            body_text_color                   = "#F8FAFC",
+            body_text_color_dark              = "#F8FAFC",
+            border_color_primary              = "#334155",
+            border_color_primary_dark         = "#334155",
+            block_background_fill             = "#1E293B",
+            block_background_fill_dark        = "#1E293B",
+            input_background_fill             = "#0F172A",
+            input_background_fill_dark        = "#0F172A",
+            button_primary_background_fill    = "#3B82F6",
+            button_primary_background_fill_dark = "#3B82F6",
             button_primary_text_color         = "#ffffff",
-            button_secondary_background_fill  = "#FFFFFF",
-            button_secondary_text_color       = "#475569",
+            button_secondary_background_fill  = "#1E293B",
+            button_secondary_text_color       = "#94A3B8",
         )
 
         with gr.Blocks(
