@@ -114,7 +114,10 @@ class AttentionVisualizer:
         fig.update_layout(
             height=800,
             showlegend=False,
-            title_x=0.5
+            title_x=0.5,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -162,8 +165,8 @@ class AttentionVisualizer:
         # Create figure with subplots
         fig = make_subplots(
             rows=3, cols=1,
-            row_heights=[0.5, 0.25, 0.25],
-            vertical_spacing=0.08,
+            row_heights=[0.4, 0.3, 0.3],
+            vertical_spacing=0.18,
             subplot_titles=(
                 "Nucleotide Importance (from Attention)",
                 "Bloom Filter Pathogenic K-mer Hits",
@@ -228,7 +231,11 @@ class AttentionVisualizer:
             height=800,
             showlegend=False,
             title_text="Nucleotide-Level Analysis with Pathogenic K-mer Detection",
-            title_x=0.5
+            title_x=0.5,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=80, b=50)
         )
         
         return fig
@@ -277,7 +284,10 @@ class AttentionVisualizer:
             xaxis_title="Sequence Position",
             yaxis_title="Attention Importance",
             height=500,
-            hovermode='x unified'
+            hovermode='x unified',
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -331,7 +341,10 @@ class AttentionVisualizer:
         
         fig.update_layout(
             title_text="Attention Patterns Across Layers",
-            height=500
+            height=500,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
         
         return fig
@@ -358,10 +371,9 @@ class AttentionVisualizer:
         importance = np.atleast_1d(np.asarray(importance)).ravel()
         bloom_hits = self.bloom_filter.check_sequence(sequence)[bloom_k]
         
-        # Create subplots
         fig = make_subplots(
             rows=3, cols=2,
-            row_heights=[0.4, 0.3, 0.3],
+            row_heights=[0.35, 0.35, 0.3],
             column_widths=[0.7, 0.3],
             specs=[
                 [{"type": "bar"}, {"type": "indicator"}],
@@ -376,7 +388,7 @@ class AttentionVisualizer:
                 "Sequence",
                 "Feature Distribution"
             ),
-            vertical_spacing=0.12,
+            vertical_spacing=0.18,
             horizontal_spacing=0.1
         )
         
@@ -424,18 +436,28 @@ class AttentionVisualizer:
         # 4. Statistics table
         bloom_features = self.bloom_filter.get_hit_features(sequence)
         stats_data = [
-            ["Sequence Length", str(len(sequence))],
-            ["Bloom Hits (k=6)", str(int(bloom_features['hit_count_k6']))],
-            ["Bloom Hits (k=8)", str(int(bloom_features['hit_count_k8']))],
-            ["Bloom Hits (k=10)", str(int(bloom_features['hit_count_k10']))],
+            ["Seq Length", str(len(sequence))],
+            ["Hits (k=6)", str(int(bloom_features['hit_count_k6']))],
+            ["Hits (k=8)", str(int(bloom_features['hit_count_k8']))],
+            ["Hits (k=10)", str(int(bloom_features['hit_count_k10']))],
             ["Hit Ratio", f"{bloom_features['mean_hit_ratio']:.3f}"]
         ]
         
         fig.add_trace(
             go.Table(
-                header=dict(values=["Metric", "Value"]),
-                cells=dict(values=[[row[0] for row in stats_data], 
-                                   [row[1] for row in stats_data]])
+                header=dict(
+                    values=["Metric", "Value"],
+                    fill_color='rgba(26, 32, 48, 0.8)',
+                    font=dict(color='white', size=13),
+                    line_color='rgba(255,255,255,0.1)'
+                ),
+                cells=dict(
+                    values=[[row[0] for row in stats_data], 
+                                   [row[1] for row in stats_data]],
+                    fill_color='rgba(18, 22, 33, 0.5)',
+                    font=dict(color='lightgrey', size=12),
+                    line_color='rgba(255,255,255,0.1)'
+                )
             ),
             row=2, col=2
         )
@@ -483,7 +505,11 @@ class AttentionVisualizer:
             height=1000,
             showlegend=False,
             title_text=f"Variant Analysis Dashboard - {prediction_result.get('prediction', 'Unknown') if prediction_result else 'Analysis'}",
-            title_x=0.5
+            title_x=0.5,
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=80, b=50)
         )
         
         return fig
