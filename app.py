@@ -30,43 +30,41 @@ from bloom_dnabert.data_loader import ClinVarDataLoader
 
 # ─── Design System CSS ────────────────────────────────────────────────────────
 CUSTOM_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* ── Design tokens ── */
 :root {
-    --bg-base:        #05060A;
-    --bg-surface:     rgba(18, 22, 33, 0.55);
-    --bg-elevated:    rgba(26, 32, 48, 0.65);
-    --bg-input:       rgba(10, 12, 18, 0.70);
-    --border-subtle:  rgba(255, 255, 255, 0.06);
-    --border-default: rgba(255, 255, 255, 0.12);
-    --border-focus:   rgba(100, 160, 255, 0.85);
-    --blue:           #5A9CFF;
-    --cyan:           #4AFAEB;
-    --green:          #42DCA3;
-    --purple:         #B48CFF;
-    --amber:          #F5B942;
-    --red:            #FF6363;
-    --text-1:         #F3F5F7;
-    --text-2:         #9EA7B8;
-    --text-3:         #636D82;
-    --shadow-card:    0 8px 32px rgba(0,0,0,0.65);
-    --shadow-glow:    0 0 40px rgba(90, 156, 255, 0.12);
-    --radius-xl:      20px;
-    --radius-lg:      14px;
-    --radius-md:      8px;
-    --ease:           cubic-bezier(.25,1,.5,1);
+    --bg-base:        #F7F9FC;
+    --bg-surface:     #FFFFFF;
+    --bg-elevated:    #FFFFFF;
+    --bg-input:       #FFFFFF;
+    --border-subtle:  #E2E8F0;
+    --border-default: #CBD5E1;
+    --border-focus:   #3B82F6;
+    --blue:           #2563EB;
+    --cyan:           #0891B2;
+    --green:          #059669;
+    --purple:         #7C3AED;
+    --amber:          #D97706;
+    --red:            #DC2626;
+    --text-1:         #0F172A;
+    --text-2:         #475569;
+    --text-3:         #64748B;
+    --shadow-card:    0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+    --shadow-hover:   0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+    --radius-xl:      12px;
+    --radius-lg:      8px;
+    --radius-md:      6px;
+    --ease:           cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── Page shell ── */
 body, .gradio-container {
-    font-family: 'Outfit', sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
     background: var(--bg-base) !important;
-    background-image: 
-        radial-gradient(circle at 15% 10%, rgba(90, 156, 255, 0.05) 0%, transparent 45%),
-        radial-gradient(circle at 85% 90%, rgba(180, 140, 255, 0.04) 0%, transparent 40%) !important;
+    background-image: none !important;
     color: var(--text-1) !important;
-    font-weight: 300 !important;
+    font-weight: 400 !important;
 }
 footer { display: none !important; }
 
@@ -75,99 +73,79 @@ footer { display: none !important; }
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.2rem 2.8rem;
-    background: rgba(5, 6, 10, 0.85);
+    padding: 1rem 2rem;
+    background: #FFFFFF;
     border-bottom: 1px solid var(--border-subtle);
     position: sticky; top: 0; z-index: 100;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
 }
 #navbar .brand {
-    display: flex; align-items: center; gap: 0.8rem;
-    font-size: 1.15rem; font-weight: 600; letter-spacing: -0.2px;
+    display: flex; align-items: center; gap: 0.6rem;
+    font-size: 1.1rem; font-weight: 700; letter-spacing: -0.3px;
     color: var(--text-1);
-    background: linear-gradient(90deg, #fff, #a0b0cf);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
 #navbar .brand .hex { 
-    color: var(--cyan); 
-    font-size: 1.4rem; 
-    -webkit-text-fill-color: var(--cyan);
-    filter: drop-shadow(0 0 6px rgba(74, 250, 235, 0.4));
+    color: var(--blue); 
+    font-size: 1.3rem; 
 }
-#navbar .nav-pills { display: flex; gap: 0.6rem; }
+#navbar .nav-pills { display: flex; gap: 0.5rem; }
 .nav-pill {
-    font-size: 0.68rem; font-weight: 600; letter-spacing: 1.2px;
-    text-transform: uppercase; padding: 0.35rem 0.9rem;
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.5px;
+    text-transform: uppercase; padding: 0.3rem 0.8rem;
     border-radius: 999px;
-    border: 1px solid transparent;
-    transition: all 0.3s var(--ease);
-}
-.pill-blue   { color: var(--blue);   background: rgba(90, 156, 255, 0.08); border-color: rgba(90, 156, 255, 0.2); }
-.pill-cyan   { color: var(--cyan);   background: rgba(74, 250, 235, 0.08); border-color: rgba(74, 250, 235, 0.2); }
-.pill-green  { color: var(--green);  background: rgba(66, 220, 163, 0.08); border-color: rgba(66, 220, 163, 0.2); }
-.pill-purple { color: var(--purple); background: rgba(180, 140, 255, 0.08); border-color: rgba(180, 140, 255, 0.2); }
-
-.nav-pill:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.2);
+    background: var(--bg-base);
+    color: var(--text-2);
+    border: 1px solid var(--border-subtle);
 }
 
 /* ── Hero ── */
 #hero {
-    padding: 3rem 3rem 2.2rem;
-    background: radial-gradient(120% 100% at 50% 0%, rgba(90, 156, 255, 0.03) 0%, transparent 100%);
+    padding: 2.5rem 2rem 2rem;
+    background: #FFFFFF;
     border-bottom: 1px solid var(--border-subtle);
     text-align: center;
 }
 #hero h1 {
-    font-size: 2.8rem; font-weight: 700; letter-spacing: -1.2px; line-height: 1.1;
+    font-size: 2.2rem; font-weight: 700; letter-spacing: -0.8px; line-height: 1.2;
     margin: 0 auto 0.8rem;
-    max-width: 900px;
-    background: linear-gradient(135deg, #FFFFFF 0%, #B8C6E0 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--text-1);
 }
 #hero p {
     font-size: 1.05rem; color: var(--text-2); line-height: 1.6;
-    max-width: 700px; margin: 0 auto;
-    font-weight: 300;
+    max-width: 800px; margin: 0 auto;
 }
-#hero strong { color: var(--text-1); font-weight: 500; }
+#hero strong { color: var(--text-1); font-weight: 600; }
 
 /* ── Tabs ── */
 .tabs > .tab-nav {
-    background: transparent !important;
+    background: #FFFFFF !important;
     border-bottom: 1px solid var(--border-subtle) !important;
-    padding: 0 2rem !important; gap: 1rem !important;
-    margin-top: 1rem !important;
+    padding: 0 1.5rem !important; gap: 0.5rem !important;
+    margin-top: 0 !important;
 }
 .tabs > .tab-nav button {
-    font-family: 'Outfit', sans-serif !important;
-    font-size: 0.95rem !important; font-weight: 500 !important;
-    color: var(--text-3) !important;
-    padding: 1rem 0.5rem !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.9rem !important; font-weight: 600 !important;
+    color: var(--text-2) !important;
+    padding: 0.8rem 1rem !important;
     border: none !important; border-bottom: 2px solid transparent !important;
     border-radius: 0 !important; background: transparent !important;
-    transition: all 0.3s var(--ease) !important;
-    letter-spacing: 0.2px !important;
+    transition: all 0.2s var(--ease) !important;
 }
 .tabs > .tab-nav button:hover { color: var(--text-1) !important; }
 .tabs > .tab-nav button.selected {
-    color: var(--text-1) !important;
+    color: var(--blue) !important;
     border-bottom-color: var(--blue) !important;
-    text-shadow: 0 0 16px rgba(90, 156, 255, 0.4) !important;
 }
 
 /* ── Section titles inside tabs ── */
 .sec-label {
-    font-size: 0.7rem; font-weight: 700; letter-spacing: 2.5px;
+    font-size: 0.75rem; font-weight: 600; letter-spacing: 1px;
     text-transform: uppercase; color: var(--text-3);
-    margin: 0 0 0.5rem;
+    margin: 0 0 0.4rem;
     display: inline-block;
 }
 .sec-title {
-    font-size: 1.2rem; font-weight: 400; color: var(--text-1);
+    font-size: 1.2rem; font-weight: 600; color: var(--text-1);
     margin: 0 0 1.5rem;
     letter-spacing: -0.3px;
 }
@@ -178,41 +156,35 @@ footer { display: none !important; }
     border: 1px solid var(--border-subtle) !important;
     border-radius: var(--radius-xl) !important;
     box-shadow: var(--shadow-card) !important;
-    backdrop-filter: blur(24px) !important;
-    -webkit-backdrop-filter: blur(24px) !important;
-    transition: all 0.3s var(--ease) !important;
+    transition: all 0.2s var(--ease) !important;
 }
 .card:hover, .output-panel:hover {
-    border-color: var(--border-default) !important;
-    box-shadow: var(--shadow-card), var(--shadow-glow) !important;
-    transform: translateY(-2px) !important;
+    box-shadow: var(--shadow-hover) !important;
 }
-.card { padding: 1.8rem 2rem !important; }
+.card { padding: 1.5rem !important; }
 
 /* ── Markdown & Prose Panels ── */
 .output-panel, .prose, .md {
-    padding: 1.8rem 2.2rem !important;
+    padding: 1.5rem !important;
     color: var(--text-1) !important;
-    font-size: 0.95rem !important; line-height: 1.8 !important;
+    font-size: 0.9rem !important; line-height: 1.6 !important;
 }
 .output-panel h3, .prose h3, .md h3 {
-    font-size: 1.1rem !important; font-weight: 600 !important;
+    font-size: 1rem !important; font-weight: 600 !important;
     color: var(--text-1) !important;
     border-bottom: 1px solid var(--border-subtle) !important;
-    padding-bottom: 0.6rem !important; margin-bottom: 1rem !important;
-    letter-spacing: -0.2px !important;
-    display: flex; align-items: center; gap: 0.5rem;
+    padding-bottom: 0.5rem !important; margin-bottom: 1rem !important;
 }
 .output-panel strong, .prose strong, .md strong {
     color: var(--text-1) !important; font-weight: 600 !important;
 }
 .output-panel code, .prose code, .md code {
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.85rem !important; padding: 0.15em 0.5em !important;
-    border-radius: 6px !important;
-    background: rgba(0,0,0,0.4) !important;
+    font-size: 0.85rem !important; padding: 0.15em 0.4em !important;
+    border-radius: 4px !important;
+    background: var(--bg-base) !important;
     border: 1px solid var(--border-subtle) !important;
-    color: var(--cyan) !important;
+    color: var(--blue) !important;
 }
 .output-panel hr, .prose hr, .md hr {
     border-top: 1px solid var(--border-subtle) !important;
@@ -220,96 +192,80 @@ footer { display: none !important; }
 }
 .output-panel table, .prose table, .md table {
     width: 100%; border-collapse: separate !important; border-spacing: 0 !important;
-    font-size: 0.9rem !important; margin: 1rem 0;
+    font-size: 0.85rem !important; margin: 1rem 0;
     border-radius: var(--radius-lg); overflow: hidden;
     border: 1px solid var(--border-subtle);
 }
 .output-panel th, .prose th, .md th {
-    background: var(--bg-elevated) !important;
-    color: var(--text-2) !important; font-weight: 500 !important;
-    padding: 0.8rem 1rem !important;
+    background: var(--bg-base) !important;
+    color: var(--text-2) !important; font-weight: 600 !important;
+    padding: 0.6rem 1rem !important;
     text-align: left;
-    text-transform: uppercase; letter-spacing: 1px; font-size: 0.75rem !important;
     border-bottom: 1px solid var(--border-subtle) !important;
 }
 .output-panel td, .prose td, .md td {
-    padding: 0.8rem 1rem !important;
-    border-bottom: 1px solid rgba(255,255,255,0.03) !important;
+    padding: 0.6rem 1rem !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
     color: var(--text-1) !important;
 }
 
 /* ── Inputs ── */
 label, .label-wrap span {
-    font-family: 'Outfit', sans-serif !important;
-    font-size: 0.7rem !important; font-weight: 600 !important;
-    letter-spacing: 1.5px !important; text-transform: uppercase !important;
-    color: var(--text-3) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.75rem !important; font-weight: 600 !important;
+    color: var(--text-2) !important;
 }
 textarea, input[type="text"] {
     background: var(--bg-input) !important;
-    border: 1px solid var(--border-subtle) !important;
+    border: 1px solid var(--border-default) !important;
     border-radius: var(--radius-lg) !important;
     color: var(--text-1) !important;
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.9rem !important; line-height: 1.7 !important;
-    padding: 1rem !important;
-    transition: all 0.3s var(--ease) !important;
+    font-size: 0.9rem !important; line-height: 1.6 !important;
+    padding: 0.8rem !important;
+    transition: all 0.2s var(--ease) !important;
 }
 textarea:focus, input[type="text"]:focus {
     border-color: var(--border-focus) !important;
-    background: rgba(20, 25, 35, 0.9) !important;
-    box-shadow: 0 0 0 4px rgba(90, 156, 255, 0.1) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
     outline: none !important;
 }
-textarea::placeholder { color: var(--text-3) !important; font-family: 'Outfit', sans-serif !important; }
+textarea::placeholder { color: var(--text-3) !important; font-family: 'Inter', sans-serif !important; }
 
 /* ── Buttons ── */
 button[variant="primary"], .gr-button-primary {
-    background: linear-gradient(135deg, var(--blue), #8A52FF) !important;
+    background: var(--blue) !important;
     border: none !important; color: #fff !important;
-    font-family: 'Outfit', sans-serif !important;
-    font-size: 0.95rem !important; font-weight: 500 !important;
-    letter-spacing: 0.5px !important;
-    border-radius: var(--radius-lg) !important;
-    padding: 0.8rem 2rem !important;
-    box-shadow: 0 4px 20px rgba(138, 82, 255, 0.3) !important;
-    transition: all 0.25s var(--ease) !important;
-    position: relative; overflow: hidden;
-}
-button[variant="primary"]::after {
-    content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    background: linear-gradient(rgba(255,255,255,0.2), transparent);
-    opacity: 0; transition: opacity 0.3s;
-}
-button[variant="primary"]:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 30px rgba(138, 82, 255, 0.45) !important;
-}
-button[variant="primary"]:hover::after { opacity: 1; }
-button[variant="primary"]:active { transform: translateY(0) !important; }
-
-button[variant="secondary"], .gr-button-secondary {
-    background: var(--bg-elevated) !important;
-    border: 1px solid var(--border-default) !important;
-    color: var(--text-2) !important;
-    font-family: 'Outfit', sans-serif !important;
+    font-family: 'Inter', sans-serif !important;
     font-size: 0.9rem !important; font-weight: 500 !important;
     border-radius: var(--radius-lg) !important;
-    transition: all 0.25s var(--ease) !important;
+    padding: 0.6rem 1.5rem !important;
+    transition: all 0.2s var(--ease) !important;
+}
+button[variant="primary"]:hover {
+    background: #1D4ED8 !important;
+}
+
+button[variant="secondary"], .gr-button-secondary {
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-default) !important;
+    color: var(--text-2) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.9rem !important; font-weight: 500 !important;
+    border-radius: var(--radius-lg) !important;
+    transition: all 0.2s var(--ease) !important;
 }
 button[variant="secondary"]:hover {
-    border-color: var(--text-1) !important;
+    background: var(--bg-base) !important;
     color: var(--text-1) !important;
-    background: rgba(255,255,255,0.05) !important;
 }
 
 /* ── Dropdown ── */
 select, .wrap select, .wrap .gr-box {
     background: var(--bg-input) !important;
-    border: 1px solid var(--border-subtle) !important;
+    border: 1px solid var(--border-default) !important;
     color: var(--text-1) !important;
     border-radius: var(--radius-lg) !important;
-    font-family: 'Outfit', sans-serif !important;
 }
 
 /* ── Slider ── */
@@ -317,32 +273,22 @@ input[type="range"] { accent-color: var(--blue) !important; }
 
 /* ── Radio ── */
 .radio-group label {
-    background: var(--bg-input) !important;
-    border: 1px solid var(--border-subtle) !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-default) !important;
     border-radius: var(--radius-lg) !important;
-    padding: 0.8rem 1.2rem !important;
-    transition: all 0.25s var(--ease) !important;
+    padding: 0.6rem 1rem !important;
     cursor: pointer !important;
-    font-size: 0.95rem !important; font-weight: 400 !important;
+    font-size: 0.9rem !important; font-weight: 500 !important;
     color: var(--text-2) !important;
 }
 .radio-group label:hover {
-    border-color: var(--border-default) !important;
-    background: var(--bg-elevated) !important;
-    color: var(--text-1) !important;
+    background: var(--bg-base) !important;
 }
 .radio-group label:has(input:checked) {
     border-color: var(--blue) !important;
-    background: rgba(90, 156, 255, 0.05) !important;
-    color: #fff !important;
-    box-shadow: inset 0 0 0 1px var(--blue) !important;
+    background: rgba(59, 130, 246, 0.05) !important;
+    color: var(--blue) !important;
 }
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 """
 
 # ─── Static HTML blocks ───────────────────────────────────────────────────────
@@ -354,10 +300,9 @@ NAVBAR_HTML = """
     <span>BloomDNABERT</span>
   </div>
   <div class="nav-pills">
-    <span class="nav-pill pill-blue">Multi-Scale Bloom Filter</span>
-    <span class="nav-pill pill-cyan">DNABERT-2 Engine</span>
-    <span class="nav-pill pill-purple">BGPCA Framework</span>
-    <span class="nav-pill pill-green">MC Dropout Enabled</span>
+    <span class="nav-pill">Multi-Scale Bloom Filter</span>
+    <span class="nav-pill">DNABERT-2 Engine</span>
+    <span class="nav-pill">BGPCA Framework</span>
   </div>
 </div>
 """
@@ -367,29 +312,29 @@ HERO_HTML = """
   <h1>Variant Classification Dashboard</h1>
   <p>
     An advanced hybrid inference system synchronizing <strong>Bloom filters</strong> for ultra-fast pathogenic k-mer detection 
-    with <strong>DNABERT-2</strong> deep representations, intelligently governed by the 
-    <strong style="color:var(--blue)">Bloom-Guided Positional Cross-Attention (BGPCA)</strong> cognitive architecture.
+    with <strong>DNABERT-2</strong> deep representations, governed by the 
+    <strong>Bloom-Guided Positional Cross-Attention (BGPCA)</strong> cognitive architecture.
   </p>
 </div>
 """
 
 ANALYZE_HEADER = """
-<div style="padding:0.5rem 0 1rem; text-align:center;">
-  <span class="sec-label">Inference Target</span>
+<div style="padding:0.5rem 0 1rem;">
+  <div class="sec-label">Inference Target</div>
   <h2 class="sec-title">Supply an HBB genome sequence below for real-time analysis</h2>
 </div>
 """
 
 TRAIN_HEADER = """
-<div style="padding:0.5rem 0 1rem; text-align:center;">
-  <span class="sec-label">Model Configuration</span>
+<div style="padding:0.5rem 0 1rem;">
+  <div class="sec-label">Model Configuration</div>
   <h2 class="sec-title">Architect and initialize your neural network training parameters</h2>
 </div>
 """
 
 FOOTER_HTML = """
-<div style="text-align:center;padding:2rem 0;border-top:1px solid var(--border-subtle);margin-top:2rem">
-  <span style="font-size:0.75rem;color:var(--text-3);letter-spacing:1px;text-transform:uppercase;">
+<div style="text-align:center;padding:1.5rem 0;border-top:1px solid #E2E8F0;margin-top:2rem">
+  <span style="font-size:0.8rem;color:#64748B;">
     BloomDNABERT Enterprise Dashboard &nbsp;·&nbsp; BGPCA Core v2.0
   </span>
 </div>
@@ -714,29 +659,29 @@ Bloom filter and attention visualisations are shown below regardless.
     def create_interface(self):
         """Create the Gradio interface."""
 
-        # Programmatic dark theme via gr.themes.Base
+        # Programmatic light theme via gr.themes.Base
         theme = gr.themes.Base(
             primary_hue=gr.themes.colors.blue,
-            secondary_hue=gr.themes.colors.sky,
-            neutral_hue=gr.themes.colors.slate,
-            font=[gr.themes.GoogleFont("Outfit"), "ui-sans-serif", "system-ui"],
+            secondary_hue=gr.themes.colors.slate,
+            neutral_hue=gr.themes.colors.gray,
+            font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "system-ui"],
             font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace"],
         ).set(
-            body_background_fill              = "#05060A",
-            body_background_fill_dark         = "#05060A",
-            body_text_color                   = "#F3F5F7",
-            body_text_color_dark              = "#F3F5F7",
-            border_color_primary              = "rgba(255,255,255,0.06)",
-            border_color_primary_dark         = "rgba(255,255,255,0.06)",
-            block_background_fill             = "rgba(18, 22, 33, 0.55)",
-            block_background_fill_dark        = "rgba(18, 22, 33, 0.55)",
-            input_background_fill             = "rgba(10, 12, 18, 0.70)",
-            input_background_fill_dark        = "rgba(10, 12, 18, 0.70)",
-            button_primary_background_fill    = "linear-gradient(135deg, #5A9CFF, #8A52FF)",
-            button_primary_background_fill_dark = "linear-gradient(135deg, #5A9CFF, #8A52FF)",
+            body_background_fill              = "#F7F9FC",
+            body_background_fill_dark         = "#F7F9FC",
+            body_text_color                   = "#0F172A",
+            body_text_color_dark              = "#0F172A",
+            border_color_primary              = "#E2E8F0",
+            border_color_primary_dark         = "#E2E8F0",
+            block_background_fill             = "#FFFFFF",
+            block_background_fill_dark        = "#FFFFFF",
+            input_background_fill             = "#FFFFFF",
+            input_background_fill_dark        = "#FFFFFF",
+            button_primary_background_fill    = "#2563EB",
+            button_primary_background_fill_dark = "#2563EB",
             button_primary_text_color         = "#ffffff",
-            button_secondary_background_fill  = "rgba(26, 32, 48, 0.65)",
-            button_secondary_text_color       = "#9EA7B8",
+            button_secondary_background_fill  = "#FFFFFF",
+            button_secondary_text_color       = "#475569",
         )
 
         with gr.Blocks(
