@@ -13,6 +13,16 @@ The dashboard will be available at: http://localhost:7860
 import sys
 import os
 
+# Override huggingface cache directory to use D drive (C drive is full)
+os.environ["HF_HOME"] = r"D:\BloomDNABert\.cache\huggingface"
+
+# Fix for Windows console encoding issues with emojis
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except (AttributeError, Exception):
+        pass
+
 print("\n" + "="*70)
 print("  🧬 Bloom-Enhanced DNABERT for Sickle Cell Variant Classification")
 print("="*70)
