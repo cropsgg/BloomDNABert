@@ -7,7 +7,7 @@ for pathogenic variants, with a focus on sickle cell disease.
 Usage:
     python launch_dashboard.py
 
-The dashboard will be available at: http://localhost:7860
+The dashboard binds to 127.0.0.1:7860 by default (see app.py).
 """
 
 import sys
