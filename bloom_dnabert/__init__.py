@@ -10,6 +10,7 @@ attention mechanisms for position-aware cross-modal fusion.
 """
 
 from .bloom_filter import MultiScaleBloomFilter
+from .data_loader import DataSourceError
 from .dnabert_wrapper import DNABERTWrapper
 from .classifier import HybridClassifier
 from .visualizer import AttentionVisualizer
@@ -25,6 +26,7 @@ __version__ = "2.0.0"
 
 __all__ = [
     "MultiScaleBloomFilter",
+    "DataSourceError",
     "DNABERTWrapper",
     "HybridClassifier",
     "AttentionVisualizer",

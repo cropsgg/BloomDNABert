@@ -41,7 +41,10 @@ This directory contains the heart of the project: the machine learning models an
 ## 📂 `data/`
 | File Name | Purpose |
 | :--- | :--- |
-| `hbb_variants.csv` | The **Primary Dataset**. Contains a curated list of HBB gene variants (Sickle Cell) used for training and evaluation. |
+| `clinvar_pan_grch38_snvs.csv` | **Large training set** (optional): tens of thousands of GRCh38 SNV windows from ClinVar `variant_summary` + `hg38.fa`. |
+| `clinvar_variant_summary.txt.gz` | Optional local copy of ClinVar FTP `variant_summary.txt.gz` for the pan-genome builder. |
+| `hbb_clinvar_refined.csv` | Small *HBB*-only ClinVar slice (exon 1 coding, coordinate-safe). |
+| `hbb_variants.csv` | Optional cache from the ClinVar API. |
 
 ---
 
