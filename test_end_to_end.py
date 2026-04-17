@@ -4,8 +4,9 @@ import sys
 
 try:
     print("Initializing components...")
-    from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-    from bloom_dnabert.classifier import BloomGuidedPipeline
+    from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+    from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+    from bloom_seq.pipeline import BloomGuidedPipeline
 
     # 1. Bloom Filter
     bloom = MultiScaleBloomFilter(capacity=100000, error_rate=0.001)

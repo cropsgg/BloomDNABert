@@ -1,10 +1,10 @@
 # Bloom-Enhanced DNABERT for Sickle Cell Variant Classification
 
-A hybrid system combining **Bloom filters** for fast pathogenic k-mer detection with **DNABERT-2** embeddings for variant classification, featuring the novel **Bloom-Guided Positional Cross-Attention (BGPCA)** architecture for position-aware cross-modal fusion with uncertainty estimation.
+A **plugin-oriented framework** for biosequence foundation models: combine **pattern indexes** (e.g. multi-scale Bloom filters) with **transformer backbones** (reference: **DNABERT-2**) using the novel **Bloom-Guided Positional Cross-Attention (BGPCA)** stack for position-aware fusion and uncertainty estimation. Third-party wheels can register new backbones, alphabets, indexes, and data sources via Python entry points—see [PLUGINS.md](PLUGINS.md) and the model ideas catalog in [MODELS.md](MODELS.md).
 
 **This repository is a research and education codebase, not a medical device.** Outputs are not validated for clinical diagnosis or treatment. See [Disclaimer](#disclaimer) below.
 
-**Documentation map:** This README is the main manual. [DATASETS.md](DATASETS.md) covers ClinVar sources, file formats, and build scripts. [CONTRIBUTING.md](CONTRIBUTING.md) describes development setup, tests, and root-level smoke scripts. [QUICKSTART.md](QUICKSTART.md) and [PROJECT_FILES_GUIDE.md](PROJECT_FILES_GUIDE.md) provide shorter orientation.
+**Documentation map:** This README is the main manual. [DATASETS.md](DATASETS.md) covers ClinVar sources, file formats, and build scripts. [CONTRIBUTING.md](CONTRIBUTING.md) describes development setup, tests, and root-level smoke scripts. [QUICKSTART.md](QUICKSTART.md) and [PROJECT_FILES_GUIDE.md](PROJECT_FILES_GUIDE.md) provide shorter orientation. **Plugin development:** [PLUGINS.md](PLUGINS.md), [MODELS.md](MODELS.md).
 
 ## Key Features
 
@@ -60,21 +60,21 @@ DNA Sequence
       +---> [Bloom Filter (k=6,8,10)]
       |           |                    |
       |      Per-position signal   Summary features
-      |      [seq_len, 3]          [18-dim]
+      |   [seq_len, n_scales]    [feature_dim]
       |           |                    |
       |    [PositionalBloomEncoder]    |
       |      (multi-scale 1D CNN)      |
-      |      [seq_len, 64]            |
+      |      [seq_len, d_bloom]         |
       |           |                    |
-      +---> [DNABERT-2 Encoder]        |
+      +---> [Backbone encoder]         |
                   |                    |
            Per-token hidden            |
-           [seq_len, 768]             |
+        [seq_len, d_model]             |
                   |                    |
       [BloomGuidedCrossAttention]      |
-        Q = DNABERT tokens             |
+        Q = backbone tokens            |
         K = Bloom encodings            |
-        V = DNABERT tokens             |
+        V = backbone tokens            |
         Bias = Bloom activation        |
               x N layers               |
                   |                    |
@@ -82,7 +82,7 @@ DNA Sequence
          (Bloom-weighted attention     |
           over positions)              |
                   |                    |
-              [768-dim]                |
+              [d_model]                |
                   |                    |
        [GatedCrossModalFusion] <-------+
          g * cross_attn + (1-g) * bloom_proj
@@ -100,7 +100,7 @@ DNA Sequence
 | Spatial information | Lost in summarization | Preserved per-position |
 | Cross-modal interaction | None (independent streams) | Cross-attention with Bloom bias |
 | Fusion strategy | Concatenation | Learned gating |
-| DNABERT features | Pooled embedding (768-dim) | Per-token hidden states |
+| Backbone features | Pooled embedding | Per-token hidden states |
 | Uncertainty | Not available | Monte Carlo dropout |
 | Interpretability | Basic attention maps | Position importance + gate values |
 
@@ -108,10 +108,10 @@ DNA Sequence
 
 | Component | Baseline | BGPCA |
 |-----------|----------|-------|
-| Bloom features | 18-dim summary | Per-position activation signal |
-| DNABERT features | Mean-pooled 768-dim | Per-token hidden states |
-| Fusion | `cat(bloom, dnabert)` -> MLP | Cross-attention + gated fusion |
-| Architecture | 2-layer MLP (786->256->128->1) | Bloom encoder + 2x cross-attn + pooling + gate + classifier |
+| Bloom features | Summary vector (index `feature_dim`) | Per-position activation signal |
+| Backbone features | Mean-pooled hidden states | Per-token hidden states |
+| Fusion | `cat(bloom, backbone)` → MLP | Cross-attention + gated fusion |
+| Architecture | 2-layer MLP on concatenated features | Bloom encoder + 2× cross-attn + pooling + gate + classifier |
 | Position awareness | None | Full positional correspondence |
 | Uncertainty | No | MC Dropout (20 samples) |
 | Interpretability | Attention heatmap | Position importance, cross-attn weights, gate values |
@@ -120,13 +120,15 @@ DNA Sequence
 
 | Concern | Module | Role |
 |--------|--------|------|
-| Multi-scale Bloom filter + k-mer hits | [bloom_dnabert/bloom_filter.py](bloom_dnabert/bloom_filter.py) | O(1) pathogenic k-mer checks; positional signal for BGPCA |
-| DNABERT-2 encode + hidden states | [bloom_dnabert/dnabert_wrapper.py](bloom_dnabert/dnabert_wrapper.py) | Transformer embeddings; supports offline cache env vars |
-| Baseline hybrid MLP | [bloom_dnabert/classifier.py](bloom_dnabert/classifier.py) (`HybridClassifierPipeline`) | Concat(Bloom summary, pooled DNABERT) → MLP |
-| BGPCA stack | [bloom_dnabert/bloom_attention_bridge.py](bloom_dnabert/bloom_attention_bridge.py), [bloom_dnabert/classifier.py](bloom_dnabert/classifier.py) (`BloomGuidedPipeline`) | Cross-attention with Bloom bias, gated fusion, MC dropout |
-| Training data | [bloom_dnabert/data_loader.py](bloom_dnabert/data_loader.py) (`ClinVarDataLoader`, `DataSourceError`) | CSV / API resolution; stratified splits without sequence leakage |
-| Sequence priors / plausibility | [bloom_dnabert/sequence_plausibility.py](bloom_dnabert/sequence_plausibility.py) | Trinucleotide context helpers (see bundled JSON background) |
+| Core protocols + registry | [bloom_seq/protocols.py](bloom_seq/protocols.py), [bloom_seq/registry.py](bloom_seq/registry.py) | Typed contracts; `importlib.metadata` entry points (`bloom_seq.*`) |
+| Multi-scale Bloom filter + k-mer hits | [bloom_seq/plugins/multiscale_bloom/index.py](bloom_seq/plugins/multiscale_bloom/index.py) | O(1) pathogenic k-mer checks; positional signal for BGPCA |
+| DNABERT-2 encode + hidden states | [bloom_seq/plugins/dnabert2/wrapper.py](bloom_seq/plugins/dnabert2/wrapper.py), [bloom_seq/plugins/dnabert2/backbone.py](bloom_seq/plugins/dnabert2/backbone.py) | Transformer embeddings; supports offline cache env vars |
+| Baseline hybrid MLP | [bloom_seq/pipeline.py](bloom_seq/pipeline.py) (`HybridClassifierPipeline`) | Concat(Bloom summary, pooled backbone embedding) → MLP |
+| BGPCA stack | [bloom_seq/bridge.py](bloom_seq/bridge.py), [bloom_seq/pipeline.py](bloom_seq/pipeline.py) (`BloomGuidedPipeline`) | Cross-attention with Bloom bias, gated fusion, MC dropout |
+| Training data | [bloom_seq/plugins/clinvar_hbb/source.py](bloom_seq/plugins/clinvar_hbb/source.py) (`ClinVarDataLoader`, `DataSourceError`) | CSV / API resolution; stratified splits without sequence leakage |
+| Sequence priors / plausibility | [bloom_seq/plugins/plausibility_dna_trinuc/prior.py](bloom_seq/plugins/plausibility_dna_trinuc/prior.py) | Trinucleotide context helpers (bundled JSON in plugin) |
 | Web UI | [app.py](app.py) | Gradio dashboard |
+| Legacy imports | [bloom_dnabert/__init__.py](bloom_dnabert/__init__.py) | Deprecation shim re-exporting `bloom_seq` |
 
 Bloom filters are seeded from known *HBB* pathogenic k-mers for this project’s scope; using the same seeds on pan-gene CSV training is a documented design choice (see [DATASETS.md](DATASETS.md)).
 
@@ -154,14 +156,20 @@ If none of the above produce rows and synthetic mode is **off**, `ClinVarDataLoa
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[dl,ui,dev]"
+```
+
+**Core-only install** (no PyTorch / Gradio; registry + protocol tests only):
+
+```bash
+pip install -e "."
 ```
 
 **Option B — requirements file only:**
 
 ```bash
 pip install -r requirements.txt
-pip install pytest   # optional, for running tests
+pip install pytest pytest-cov   # optional, for running tests
 ```
 
 Python **3.10+** is supported (CI exercises 3.11 and 3.12).
@@ -174,7 +182,7 @@ Model weights for `zhihan1996/DNABERT-2-117M` download into the Hugging Face cac
 export HF_HOME="$HOME/.cache/huggingface"
 ```
 
-For air-gapped use, pre-populate the cache and set `HF_HUB_OFFLINE=1` as described in [bloom_dnabert/dnabert_wrapper.py](bloom_dnabert/dnabert_wrapper.py).
+For air-gapped use, pre-populate the cache and set `HF_HUB_OFFLINE=1` as described in [bloom_seq/plugins/dnabert2/wrapper.py](bloom_seq/plugins/dnabert2/wrapper.py).
 
 ### 3. Launch the web dashboard
 
@@ -193,7 +201,7 @@ The UI is served at `http://127.0.0.1:7860` by default. Equivalent entry point: 
 
 ### 5. Triton compatibility (DNABERT-2)
 
-Upstream DNABERT-2 may import Flash attention paths that expect **Triton**. This repo ships [bloom_dnabert/triton_stub.py](bloom_dnabert/triton_stub.py) and [create_triton_stub.py](create_triton_stub.py) so CPU / non-Triton PyTorch can run the model safely. You normally do not need to run the script unless your environment still pulls incompatible Flash kernels; see comments in `dnabert_wrapper.py`.
+Upstream DNABERT-2 may import Flash attention paths that expect **Triton**. This repo ships [bloom_seq/plugins/dnabert2/triton_compat.py](bloom_seq/plugins/dnabert2/triton_compat.py) and [create_triton_stub.py](create_triton_stub.py) so CPU / non-Triton PyTorch can run the model safely. You normally do not need to run the script unless your environment still pulls incompatible Flash kernels; see comments in `wrapper.py`.
 
 A shorter checklist lives in [QUICKSTART.md](QUICKSTART.md).
 
@@ -239,15 +247,16 @@ Both architectures include production-grade training features:
 - **CosineAnnealing LR scheduler** with warm restarts for smooth convergence
 - **K-fold cross-validation** (`pipeline.cross_validate(seqs, labels, n_folds=5)`) for reliable small-dataset evaluation
 - **Calibration analysis** (`pipeline.calibration_analysis(seqs, labels)`) computes ECE/MCE to verify predicted probabilities match observed frequencies
-- **Input validation** enforces 10-5000 bp length, ATCGN-only alphabet, and sanitizes all inputs before inference
+- **Input validation** enforces 10-5000 bp length, DNA/RNA alphabet (including ambiguity symbols when configured), and sanitizes all inputs before inference
 
 ## Python API
 
 ### Novel BGPCA Architecture
 
 ```python
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-from bloom_dnabert.classifier import BloomGuidedPipeline
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+from bloom_seq.pipeline import BloomGuidedPipeline
 
 # Initialize
 bloom_filter = MultiScaleBloomFilter()
@@ -275,7 +284,7 @@ print(f"Gate values (Bloom vs DNABERT): {interp['gate_values'].mean():.3f}")
 ### Baseline Architecture
 
 ```python
-from bloom_dnabert.classifier import HybridClassifierPipeline
+from bloom_seq.pipeline import HybridClassifierPipeline
 
 pipeline = HybridClassifierPipeline(bloom_filter, dnabert)
 pipeline.train(train_sequences, train_labels, epochs=50)
@@ -314,27 +323,28 @@ signal = bloom_filter.get_positional_signal("CACGTGGTCTACCCCTGAGGAG")
 BloomDNABert/
 +-- app.py                         # Gradio web dashboard
 +-- launch_dashboard.py            # Thin launcher (imports app.main)
-+-- pyproject.toml                 # Package metadata + optional [dev] deps (pytest)
-+-- requirements.txt               # Runtime pins (mirrors pyproject dependencies)
++-- pyproject.toml                 # bloom-seq metadata, extras [dl]/[ui]/[dev], entry points
++-- requirements.txt               # Practical full stack (≈ pip install -e ".[dl,ui]")
++-- PLUGINS.md, MODELS.md          # Plugin how-to and model catalog (docs only)
 +-- LICENSE                        # MIT
 +-- README.md                      # This manual
 +-- DATASETS.md                    # Data provenance and build commands
 +-- CONTRIBUTING.md                # Dev setup, tests, smoke scripts
 +-- CODE_OF_CONDUCT.md
 +-- SECURITY.md
-+-- .github/workflows/ci.yml       # pytest on PRs
-+-- bloom_dnabert/
++-- .github/workflows/ci.yml       # minimal (core) + full (extras) pytest jobs
++-- bloom_seq/                     # Core framework + bundled reference plugins
+|   +-- protocols.py, registry.py, errors.py, alphabets.py, splits.py
+|   +-- bridge.py                  # BGPCA layers
+|   +-- pipeline.py                # Baseline + BGPCA pipelines
+|   +-- viz.py
+|   +-- plugins/
+|       +-- dnabert2/              # Backbone + Triton compat
+|       +-- multiscale_bloom/      # Pattern index
+|       +-- clinvar_hbb/           # Data source, seeds, clinvar_pan
+|       +-- plausibility_dna_trinuc/
++-- bloom_dnabert/                 # Deprecation shim (re-exports bloom_seq)
 |   +-- __init__.py
-|   +-- bloom_filter.py
-|   +-- dnabert_wrapper.py
-|   +-- bloom_attention_bridge.py  # BGPCA layers
-|   +-- classifier.py              # Baseline + BGPCA pipelines
-|   +-- data_loader.py             # ClinVar CSV/API; opt-in synthetic for tests
-|   +-- visualizer.py
-|   +-- sequence_plausibility.py
-|   +-- triton_stub.py             # Safe path when Triton is unavailable
-|   +-- clinvar_pan.py
-|   +-- human_trinuc_bg.json
 +-- scripts/
 |   +-- build_hbb_clinvar_dataset.py
 |   +-- build_clinvar_pan_dataset.py
@@ -377,7 +387,7 @@ Root-level `test_system.py`, `test_train.py`, and `test_end_to_end.py` are **man
 Automated tests live under `tests/` and mock Hugging Face / Gradio where appropriate so CI does not download multi-gigabyte weights.
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dl,ui,dev]"
 pytest tests/ -q
 ```
 
@@ -405,11 +415,11 @@ For full-stack manual checks with real weights and optional live data, see [CONT
 If you use this software, please cite the repository and the underlying DNABERT-2 model (see the [model card](https://huggingface.co/zhihan1996/DNABERT-2-117M)). Replace maintainer names in `author` when you publish a paper or Zenodo archive.
 
 ```bibtex
-@software{bloom_dnabert,
-  title        = {BloomDNABert: Bloom Filters and {DNABERT-2} for Variant Sequence Analysis with {BGPCA}},
+@software{bloom_seq,
+  title        = {Bloom Seq: Plugin Framework for Biosequence Models with Bloom--Transformer {BGPCA}},
   author       = {BloomDNABert contributors},
   year         = {2026},
-  note         = {Research software; BGPCA architecture. Add repository URL or Zenodo DOI when you publish.}
+  note         = {PyPI distribution name bloom-seq; legacy package bloom\_dnabert is deprecated.}
 }
 ```
 

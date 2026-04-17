@@ -128,4 +128,4 @@ Use this when you want **orders of magnitude more data** than the *HBB*-only CSV
 
 ---
 
-*Last updated: aligned with the loader behavior in `bloom_dnabert/data_loader.py` (germline significance parsing, exon-1 coordinate guard, refined CSV path).*
+*Last updated: aligned with the loader behavior in `bloom_seq/plugins/clinvar_hbb/source.py` (germline significance parsing, exon-1 coordinate guard, refined CSV path).*

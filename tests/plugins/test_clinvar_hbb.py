@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "bloom_data_loader",
-    _ROOT / "bloom_dnabert" / "data_loader.py",
+    _ROOT / "bloom_seq" / "plugins" / "clinvar_hbb" / "source.py",
 )
 _dl = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None

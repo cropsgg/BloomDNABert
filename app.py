@@ -19,9 +19,27 @@ import numpy as np
 from pathlib import Path
 import socket
 
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper, HybridClassifier, AttentionVisualizer
-from bloom_dnabert.classifier import HybridClassifierPipeline, BloomGuidedPipeline
-from bloom_dnabert.data_loader import ClinVarDataLoader, DataSourceError
+from bloom_seq import list_all_plugins
+from bloom_seq.alphabets import DNA_ALPHABET
+from bloom_seq.errors import DataSourceError
+from bloom_seq.registry import backbones as backbone_plugins
+from bloom_seq.registry import data_sources as data_source_plugins
+from bloom_seq.registry import pattern_indexes as pattern_index_plugins
+from bloom_seq.pipeline import BloomGuidedPipeline, HybridClassifierPipeline
+from bloom_seq.viz import AttentionVisualizer
+
+
+def _default_plugin_id(group: list[str], preferred: str) -> str:
+    if preferred in group:
+        return preferred
+    return group[0] if group else preferred
+
+
+def _plugin_registry_markdown() -> str:
+    lines = ["**Entry-point plugins** (extend via `pyproject.toml` — see PLUGINS.md):", ""]
+    for group, names in sorted(list_all_plugins().items()):
+        lines.append(f"- **{group}**: {', '.join(names) if names else '—'}")
+    return "\n".join(lines)
 
 
 # ─── Design System CSS ────────────────────────────────────────────────────────
@@ -296,9 +314,9 @@ NAVBAR_HTML = """
     <span>BloomDNABERT</span>
   </div>
   <div class="nav-pills">
-    <span class="nav-pill">Multi-Scale Bloom Filter</span>
-    <span class="nav-pill">DNABERT-2 Engine</span>
-    <span class="nav-pill">BGPCA Framework</span>
+    <span class="nav-pill">Pattern index</span>
+    <span class="nav-pill">Sequence backbone</span>
+    <span class="nav-pill">BGPCA</span>
   </div>
 </div>
 """
@@ -307,9 +325,10 @@ HERO_HTML = """
 <div id="hero">
   <h1>Variant Classification Dashboard</h1>
   <p>
-    An advanced hybrid inference system synchronizing <strong>Bloom filters</strong> for ultra-fast pathogenic k-mer detection 
-    with <strong>DNABERT-2</strong> deep representations, governed by the 
-    <strong>Bloom-Guided Positional Cross-Attention (BGPCA)</strong> cognitive architecture.
+    <strong>bloom_seq</strong> dashboard: fast approximate <strong>k-mer / pattern indexes</strong> plus a
+    <strong>sequence backbone</strong> (default: DNABERT-2), with optional
+    <strong>Bloom-Guided Positional Cross-Attention (BGPCA)</strong>. Register alternate DNA/RNA/protein
+    models via Python entry points (see PLUGINS.md).
   </p>
 </div>
 """
@@ -317,7 +336,7 @@ HERO_HTML = """
 ANALYZE_HEADER = """
 <div style="padding:0.5rem 0 1rem;">
   <div class="sec-label">Inference Target</div>
-  <h2 class="sec-title">Supply an HBB genome sequence below for real-time analysis</h2>
+  <h2 class="sec-title">Supply a DNA sequence for real-time analysis (reference task: HBB / ClinVar)</h2>
 </div>
 """
 
@@ -350,49 +369,77 @@ class VariantAnalysisDashboard:
         self.active_pipeline = None
         self.active_model_name = None
         self.trained = False
+        reg = list_all_plugins()
+        self._plugin_backbone_id = _default_plugin_id(reg.get("backbones", []), "dnabert2")
+        self._plugin_index_id = _default_plugin_id(reg.get("pattern_indexes", []), "multiscale_bloom")
+        self._data_source_id = _default_plugin_id(reg.get("data_sources", []), "clinvar_hbb")
 
-        print("Initializing Bloom-Enhanced DNABERT Dashboard...")
-        self._initialize_components()
+        print("Initializing Bloom Seq dashboard (plugin registry)...")
+        self._rebuild_ml_stack(self._plugin_backbone_id, self._plugin_index_id)
 
-    def _initialize_components(self):
-        """Initialize all ML components with error handling."""
+    def _rebuild_ml_stack(self, backbone_id: str, index_id: str) -> None:
+        """Load pattern index + backbone from registry entry points."""
+        # Pipelines hold references to the previous backbone/index; a reload must
+        # invalidate any trained weights or inference becomes silently inconsistent.
+        self.trained = False
+        self.active_pipeline = None
+        self.active_model_name = None
+
         try:
-            print("Loading Bloom filter...")
-            self.bloom_filter = MultiScaleBloomFilter(capacity=100000, error_rate=0.001)
-            self.bloom_filter.load_hbb_pathogenic_variants()
+            print(f"Loading pattern index plugin {index_id!r}...")
+            IndexCls = pattern_index_plugins.get_class(index_id)
+            self.bloom_filter = IndexCls(capacity=100000, error_rate=0.001)
+            if hasattr(self.bloom_filter, "load_hbb_pathogenic_variants"):
+                self.bloom_filter.load_hbb_pathogenic_variants()
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize Bloom filter: {e}") from e
+            raise RuntimeError(f"Failed to initialize pattern index {index_id!r}: {e}") from e
 
         try:
-            print("Loading DNABERT-2 model...")
-            self.dnabert_wrapper = DNABERTWrapper()
+            print(f"Loading backbone plugin {backbone_id!r}...")
+            BackboneCls = backbone_plugins.get_class(backbone_id)
+            self.dnabert_wrapper = BackboneCls()
         except Exception as e:
             raise RuntimeError(
-                f"Failed to load DNABERT-2 model: {e}. "
-                "Ensure transformers and model weights are available."
+                f"Failed to load backbone {backbone_id!r}: {e}. "
+                "Ensure `[dl]` extras and model weights are available."
             ) from e
 
         self.visualizer = AttentionVisualizer(self.dnabert_wrapper, self.bloom_filter)
 
         self.baseline_pipeline = HybridClassifierPipeline(
             bloom_filter=self.bloom_filter,
-            dnabert_wrapper=self.dnabert_wrapper
+            dnabert_wrapper=self.dnabert_wrapper,
         )
 
         self.bgpca_pipeline = BloomGuidedPipeline(
             bloom_filter=self.bloom_filter,
-            dnabert_wrapper=self.dnabert_wrapper
+            dnabert_wrapper=self.dnabert_wrapper,
         )
 
-        print("Dashboard initialized successfully!")
+        self._plugin_backbone_id = backbone_id
+        self._plugin_index_id = index_id
+        print("Dashboard ML stack ready.")
 
-    def train_model(self, model_choice: str, epochs: int = 30, progress=gr.Progress()):
+    def train_model(
+        self,
+        model_choice: str,
+        epochs: int,
+        backbone_id: str,
+        index_id: str,
+        data_source_id: str,
+        progress=gr.Progress(),
+    ):
         """Train the selected classifier model."""
         try:
             progress(0, desc="Loading data...")
 
-            data_loader = ClinVarDataLoader()
-            train_df, val_df, test_df = data_loader.get_training_data()
+            if backbone_id != self._plugin_backbone_id or index_id != self._plugin_index_id:
+                self._rebuild_ml_stack(backbone_id, index_id)
+
+            SourceCls = data_source_plugins.get_class(data_source_id)
+            data_source = SourceCls()
+            train_df, val_df, test_df = data_source.get_training_splits()
+            self._data_source_id = data_source_id
 
             progress(0.2, desc="Preparing datasets...")
 
@@ -435,11 +482,17 @@ class VariantAnalysisDashboard:
             return (
                 "### Training data required\n\n"
                 f"{e}\n\n"
-                "See **DATASETS.md** in the repository for how to build or download CSVs."
+                "See **DATASETS.md** in the repository for how to build or download CSVs.",
+                gr.update(),
             )
         except Exception as e:
-            return f"### ❌  Training Failed\n\n**Error:** `{str(e)}`\n\nCheck console output for details."
+            return (
+                f"### ❌  Training Failed\n\n**Error:** `{str(e)}`\n\nCheck console output for details.",
+                gr.update(),
+            )
 
+        bf_dim = self.bloom_filter.feature_dim
+        h_dim = self.dnabert_wrapper.hidden_size
         arch_note = (
             "- Positional Bloom Encoder (multi-scale 1D CNN)\n"
             "- Bloom-Guided Cross-Attention (2 layers, 4 heads)\n"
@@ -447,7 +500,7 @@ class VariantAnalysisDashboard:
             "- Gated Cross-Modal Fusion\n"
             "- Monte Carlo Dropout Uncertainty"
         ) if use_bgpca else (
-            "- Bloom features (18-dim) + DNABERT embedding (768-dim)\n"
+            f"- Bloom features ({bf_dim}-dim) + backbone embedding ({h_dim}-dim)\n"
             "- Concatenation → 2-layer MLP"
         )
 
@@ -456,7 +509,8 @@ class VariantAnalysisDashboard:
         last_val_loss   = history['val_loss'][-1]   if history['val_loss']   else 0.0
         last_val_acc    = history['val_acc'][-1]    if history['val_acc']    else 0.0
 
-        return f"""
+        return (
+            f"""
 ### ✅  Training Complete — {model_name}
 
 **Architecture**
@@ -485,8 +539,10 @@ class VariantAnalysisDashboard:
 | Train      | `{last_train_loss:.4f}` | `{last_train_acc:.4f}` |
 | Validation | `{last_val_loss:.4f}`   | `{last_val_acc:.4f}`   |
 
-> Switch to **Analyze Sequence** to classify any HBB variant.
-"""
+> Switch to **Analyze Sequence** to classify variants from the trained data domain.
+""",
+            gr.update(choices=self._example_choice_labels()),
+        )
 
     def analyze_sequence(self, sequence: str):
         """Analyze a DNA sequence."""
@@ -494,8 +550,18 @@ class VariantAnalysisDashboard:
             return "Please enter a valid DNA sequence (at least 10 nucleotides).", None, None, "*Sequence too short for pipeline trace.*"
 
         sequence = sequence.upper().strip()
-        if not all(base in 'ATCGN' for base in sequence):
-            return "❌  Invalid sequence: only A, T, C, G, N are allowed.", None, None, "*Invalid sequence — pipeline halted.*"
+        _allowed_dna = set(
+            (DNA_ALPHABET.symbols + DNA_ALPHABET.ambiguity).upper()
+        )
+        if not all(base in _allowed_dna for base in sequence):
+            amb = DNA_ALPHABET.ambiguity or ""
+            return (
+                f"❌  Invalid sequence: allowed {DNA_ALPHABET.symbols!r}"
+                f"{f' (+ ambiguity {amb!r})' if amb else ''}.",
+                None,
+                None,
+                "*Invalid sequence — pipeline halted.*",
+            )
 
         interp = None
         try:
@@ -639,10 +705,11 @@ Bloom filter and attention visualisations are shown below regardless.
             trace += f"- **Subword BPE Tokenization**: The contiguous sequence is algorithmically sectioned into `{len(tokens)}` specific genomic vocabulary tokens optimized by the BPE methodology.\n"
         except Exception:
             pass
+        h = self.dnabert_wrapper.hidden_size
         if is_bgpca:
-            trace += f"- **Dense Token Representation**: The DL engine maps the representation space, outputting full deep hidden states for every token `[num_tokens, 768]`. Because this is unpooled, exact spatial layout of the genetic code is retained for the next block.\n"
+            trace += f"- **Dense Token Representation**: The DL engine maps the representation space, outputting full deep hidden states for every token `[num_tokens, {h}]`. Because this is unpooled, exact spatial layout of the genetic code is retained for the next block.\n"
         else:
-            trace += f"- **Pooled Representation**: The engine compresses the entire sequence into a single 1D scalar `[1, 768]`. Crucially, exact token spatial location geometry is destroyed in this process.\n"
+            trace += f"- **Pooled Representation**: The engine compresses the entire sequence into a single 1D scalar `[1, {h}]`. Crucially, exact token spatial location geometry is destroyed in this process.\n"
 
         # 4. Fusion
         trace += f"\n### 4. Cross-Modal Cognitive Fusion ({self.active_model_name})\n"
@@ -655,9 +722,14 @@ Bloom filter and attention visualisations are shown below regardless.
                 trace += f"- **Dynamic Arbitration Gate**: The network autonomously computes a scalar interpolation variable to govern trust between the classical and deep learning subsystems: `{gate_mean:.3f}`.\n"
                 trace += f"  - *Decision Result: The network intrinsically decides to rely {'>' if gate_mean > 0.5 else '<'} 50% on deep contextual features (DNABERT) compared to the classical exact matches (Bloom).* \n"
         else:
+            bf = self.bloom_filter.feature_dim
             trace += f"**Action:** The baseline system executes a simplified unweighted vector append operation.\n"
-            trace += f"- **Fixed Vector Concatenation**: The 18-dimensional numeric hit summary from the Bloom filter is blindly appended end-to-end onto the 768-dimensional scalar output of DNABERT.\n"
-            trace += f"- **Information Bottleneck (MLP Layer)**: The resulting 786-dimensional flattened vector is passed through a basic 2-layer classifier. The model attempts to map the vector manually.\n"
+            trace += (
+                f"- **Fixed Vector Concatenation**: The {bf}-dimensional numeric hit summary from "
+                f"the Bloom filter is blindly appended end-to-end onto the {h}-dimensional "
+                f"scalar output of the backbone encoder.\n"
+            )
+            trace += f"- **Information Bottleneck (MLP Layer)**: The resulting {bf + h}-dimensional flattened vector is passed through a basic 2-layer classifier. The model attempts to map the vector manually.\n"
 
         # 5. Output
         trace += f"\n### 5. Probabilistic Variant Classification\n"
@@ -671,26 +743,25 @@ Bloom filter and attention visualisations are shown below regardless.
                 
         return trace
 
+    def _example_choice_labels(self) -> list[str]:
+        """Human-readable example names for the current data-source plugin."""
+        try:
+            Cls = data_source_plugins.get_class(self._data_source_id)
+            ex_fn = getattr(Cls, "example_sequences", None)
+            raw = list(ex_fn()) if callable(ex_fn) else []
+        except Exception:
+            return []
+        return [e["label"] for e in raw if "label" in e]
+
     def analyze_example(self, example_name: str):
-        """Return a pre-defined example sequence."""
-        examples = {
-            "Normal HBB (Wild-type)":
-                "CACGTGGACTACCCCTGAGGAGAAGTCTGCCGTTACTGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCC"
-                "CTGGGCAGGTTGGTATCAAGGTTACAAGACAGGTTTAAGGAGACCAATAGAAACTGGGCATGTGGAGACAGAGAAGACTCTT"
-                "GGGTTTCTGATAGGCACTGACTCTCTCTGCCTATTGGTCTATTTTCCCACCCTTAGG",
-            "Sickle Cell (HbS E6V)":
-                "CACGTGGTCTACCCCTGAGGAGAAGTCTGCCGTTACTGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCC"
-                "CTGGGCAGGTTGGTATCAAGGTTACAAGACAGGTTTAAGGAGACCAATAGAAACTGGGCATGTGGAGACAGAGAAGACTCTT"
-                "GGGTTTCTGATAGGCACTGACTCTCTCTGCCTATTGGTCTATTTTCCCACCCTTAGG",
-            "HbC Disease (E6K)":
-                "CACGTGAAGTACCCCTGAGGAGAAGTCTGCCGTTACTGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCC"
-                "CTGGGCAGGTTGGTATCAAGGTTACAAGACAGGTTTAAGGAGACCAATAGAAACTGGGCATGTGGAGACAGAGAAGACTCTT"
-                "GGGTTTCTGATAGGCACTGACTCTCTCTGCCTATTGGTCTATTTTCCCACCCTTAGG",
-            "Random Benign Variant":
-                "CACGTGGACTACCCCTGAGGAGAAGTCTGCCGTTACTACCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCC"
-                "CTGGGCAGGTTGGTATCAAGGTTACAAGACAGGTTTAAGGAGACCAATAGAAACTGGGCATGTGGAGACAGAGAAGACTCTT"
-                "GGGTTTCTGATAGGCACTGACTCTCTCTGCCTATTGGTCTATTTTCCCACCCTTAGG",
-        }
+        """Return a pre-defined example sequence from the active data-source plugin."""
+        try:
+            Cls = data_source_plugins.get_class(self._data_source_id)
+            ex_fn = getattr(Cls, "example_sequences", None)
+            raw = list(ex_fn()) if callable(ex_fn) else []
+        except Exception:
+            raw = []
+        examples = {e["label"]: e["sequence"] for e in raw if "label" in e and "sequence" in e}
         return examples.get(example_name, "")
 
     def create_interface(self):
@@ -763,17 +834,13 @@ Bloom filter and attention visualisations are shown below regardless.
                                 )
 
                             gr.Markdown(
-                                "**Examples** — load a known HBB variant:",
+                                "**Examples** — from the active data-source plugin (updates after training):",
                                 elem_classes=["sec-label"],
                             )
                             with gr.Row():
+                                _ex_labels = self._example_choice_labels()
                                 example_dropdown = gr.Dropdown(
-                                    choices=[
-                                        "Normal HBB (Wild-type)",
-                                        "Sickle Cell (HbS E6V)",
-                                        "HbC Disease (E6K)",
-                                        "Random Benign Variant",
-                                    ],
+                                    choices=_ex_labels,
                                     label="Select Example",
                                     elem_id="example_dropdown",
                                 )
@@ -839,18 +906,41 @@ Bloom filter and attention visualisations are shown below regardless.
                 with gr.Tab("⚙️  Train Model"):
                     gr.HTML(TRAIN_HEADER)
 
-                    gr.Markdown("""
+                    gr.Markdown(_plugin_registry_markdown())
+
+                    gr.Markdown(f"""
 Choose an architecture to train. See the comparison below:
 
 | | Baseline | BGPCA (Novel) |
 |:--|:--|:--|
-| Bloom features | 18-dim summary | Per-position signal |
-| DNABERT features | Pooled 768-dim | Per-token hidden states |
+| Bloom features | {self.bloom_filter.feature_dim}-dim summary | Per-position signal |
+| Backbone features | Pooled {self.dnabert_wrapper.hidden_size}-dim | Per-token hidden states |
 | Fusion | Concatenation | Cross-attention + gating |
 | Position info | Lost | Preserved |
 | Uncertainty | — | MC Dropout |
 | Interpretability | Basic | Position importance + gate |
 """)
+
+                    _reg = list_all_plugins()
+                    with gr.Row():
+                        backbone_dd = gr.Dropdown(
+                            choices=_reg.get("backbones", []),
+                            value=self._plugin_backbone_id,
+                            label="Backbone (registry)",
+                            elem_id="backbone_dd",
+                        )
+                        index_dd = gr.Dropdown(
+                            choices=_reg.get("pattern_indexes", []),
+                            value=self._plugin_index_id,
+                            label="Pattern index",
+                            elem_id="index_dd",
+                        )
+                        data_dd = gr.Dropdown(
+                            choices=_reg.get("data_sources", []),
+                            value=self._data_source_id,
+                            label="Data source",
+                            elem_id="data_dd",
+                        )
 
                     with gr.Row():
                         model_choice = gr.Radio(
@@ -886,8 +976,8 @@ Choose an architecture to train. See the comparison below:
 
                     train_btn.click(
                         fn=self.train_model,
-                        inputs=[model_choice, epochs_slider],
-                        outputs=[training_output],
+                        inputs=[model_choice, epochs_slider, backbone_dd, index_dd, data_dd],
+                        outputs=[training_output, example_dropdown],
                     )
 
                 # ── Tab 3 · About ────────────────────────────────────────

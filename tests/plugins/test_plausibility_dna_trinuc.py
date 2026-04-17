@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "sequence_plausibility",
-    _ROOT / "bloom_dnabert" / "sequence_plausibility.py",
+    _ROOT / "bloom_seq" / "plugins" / "plausibility_dna_trinuc" / "prior.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None

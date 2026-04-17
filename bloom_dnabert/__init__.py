@@ -1,34 +1,42 @@
-"""
-Bloom-Enhanced DNABERT for Sickle Cell Variant Classification
+"""Deprecated compatibility shim — use ``bloom_seq`` instead."""
 
-A hybrid system combining Bloom filters for fast pathogenic k-mer detection
-with DNABERT-2 embeddings for variant classification.
+from __future__ import annotations
 
-Includes the novel Bloom-Guided Positional Cross-Attention (BGPCA)
-architecture that bridges probabilistic data structures with neural
-attention mechanisms for position-aware cross-modal fusion.
-"""
+import warnings
 
-from .bloom_filter import MultiScaleBloomFilter
-from .data_loader import DataSourceError
-from .dnabert_wrapper import DNABERTWrapper
-from .classifier import HybridClassifier
-from .visualizer import AttentionVisualizer
-from .bloom_attention_bridge import (
-    BloomGuidedClassifier,
-    PositionalBloomEncoder,
-    BloomGuidedCrossAttention,
-    MutationAwarePooling,
-    GatedCrossModalFusion,
+warnings.warn(
+    "Package `bloom_dnabert` is deprecated; import from `bloom_seq` and use "
+    "entry-point plugins (see PLUGINS.md). This shim will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__version__ = "2.0.0"
+from bloom_seq.bridge import (
+    BloomGuidedClassifier,
+    BloomGuidedCrossAttention,
+    GatedCrossModalFusion,
+    MutationAwarePooling,
+    PositionalBloomEncoder,
+)
+from bloom_seq.errors import DataSourceError
+from bloom_seq.pipeline import (
+    BloomGuidedPipeline,
+    HybridClassifier,
+    HybridClassifierPipeline,
+)
+from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+from bloom_seq.viz import AttentionVisualizer
+
+__version__ = "2.1.0"
 
 __all__ = [
     "MultiScaleBloomFilter",
     "DataSourceError",
     "DNABERTWrapper",
     "HybridClassifier",
+    "HybridClassifierPipeline",
+    "BloomGuidedPipeline",
     "AttentionVisualizer",
     "BloomGuidedClassifier",
     "PositionalBloomEncoder",

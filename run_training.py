@@ -9,9 +9,10 @@ from pathlib import Path
 # Ensure package is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-from bloom_dnabert.classifier import HybridClassifierPipeline
-from bloom_dnabert.data_loader import ClinVarDataLoader
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+from bloom_seq.pipeline import HybridClassifierPipeline
+from bloom_seq.plugins.clinvar_hbb.source import ClinVarDataLoader
 
 
 def main():

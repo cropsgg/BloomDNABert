@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bloom-dnabert"
-version = "2.0.0"
-description = "Bloom filters + DNABERT-2 for DNA variant analysis with optional BGPCA cross-attention"
+name = "bloom-seq"
+version = "2.1.0"
+description = "Plugin framework for biosequence encoders with Bloom-guided cross-attention (BGPCA)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "BloomDNABert contributors" }]
-keywords = ["bioinformatics", "dnabert", "bloom-filter", "variants", "clinvar"]
+keywords = ["bioinformatics", "dnabert", "bloom-filter", "foundation-model", "variants", "clinvar"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
@@ -23,29 +23,51 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
-  "torch>=2.0.0,<3.0.0",
-  "transformers>=4.30.0,<5.0.0",
-  "accelerate>=0.20.0,<1.0.0",
-  "einops>=0.7.0,<1.0.0",
   "numpy>=2.0.0,<3.0.0",
   "pybloom-live>=3.1.0,<5.0.0",
-  "plotly>=5.0.0,<6.0.0",
-  "gradio>=4.0.0,<5.0.0",
-  "fastapi>=0.115.0,<0.116.0",
-  "starlette>=0.40.0,<0.46.0",
   "pandas>=2.0.0,<3.1.0",
   "scikit-learn>=1.3.0,<2.0.0",
   "requests>=2.28.0,<3.0.0",
   "pyfaidx>=0.8.0,<1.0.0",
-  "audioop-lts>=0.2.0",
 ]
 
 [project.optional-dependencies]
+dl = [
+  "torch>=2.0.0,<3.0.0",
+  "transformers>=4.30.0,<5.0.0",
+  "accelerate>=0.20.0,<1.0.0",
+  "einops>=0.7.0,<1.0.0",
+]
+ui = [
+  "plotly>=5.0.0,<6.0.0",
+  "gradio>=4.0.0,<5.0.0",
+  "fastapi>=0.115.0,<0.116.0",
+  "starlette>=0.40.0,<0.46.0",
+  "audioop-lts>=0.2.0",
+]
 dev = ["pytest>=8.0.0"]
+all = ["bloom-seq[dl,ui,dev]"]
+
+[project.entry-points."bloom_seq.alphabets"]
+dna = "bloom_seq.alphabets:DNA_ALPHABET"
+rna = "bloom_seq.alphabets:RNA_ALPHABET"
+protein = "bloom_seq.alphabets:PROTEIN_ALPHABET"
+
+[project.entry-points."bloom_seq.backbones"]
+dnabert2 = "bloom_seq.plugins.dnabert2.backbone:DNABERT2Backbone"
+
+[project.entry-points."bloom_seq.pattern_indexes"]
+multiscale_bloom = "bloom_seq.plugins.multiscale_bloom:MultiScaleBloomIndex"
+
+[project.entry-points."bloom_seq.plausibility"]
+dna_trinuc = "bloom_seq.plugins.plausibility_dna_trinuc:DNATrinucPrior"
+
+[project.entry-points."bloom_seq.data_sources"]
+clinvar_hbb = "bloom_seq.plugins.clinvar_hbb:HBBClinVarSource"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["bloom_dnabert*"]
+include = ["bloom_seq*", "bloom_dnabert*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

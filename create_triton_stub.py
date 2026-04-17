@@ -15,7 +15,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from bloom_dnabert.triton_stub import prepare_dnabert_environment  # noqa: E402
+from bloom_seq.plugins.dnabert2.triton_compat import prepare_dnabert_environment  # noqa: E402
 
 
 def main() -> None:

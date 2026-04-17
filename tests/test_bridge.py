@@ -3,7 +3,7 @@
 import pytest
 import torch
 import numpy as np
-from bloom_dnabert.bloom_attention_bridge import (
+from bloom_seq.bridge import (
     PositionalBloomEncoder,
     BloomGuidedCrossAttention,
     MutationAwarePooling,
@@ -14,11 +14,11 @@ from bloom_dnabert.bloom_attention_bridge import (
 
 BATCH = 2
 SEQ_LEN = 16
-D_MODEL = 768
+D_MODEL = 256
 D_BLOOM = 64
 N_SCALES = 3
 N_HEADS = 4
-BLOOM_SUMMARY_DIM = 18
+BLOOM_SUMMARY_DIM = 24
 
 
 @pytest.fixture

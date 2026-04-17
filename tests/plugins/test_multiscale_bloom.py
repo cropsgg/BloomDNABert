@@ -2,7 +2,7 @@
 
 import pytest
 import numpy as np
-from bloom_dnabert.bloom_filter import MultiScaleBloomFilter
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
 
 
 @pytest.fixture

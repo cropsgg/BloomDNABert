@@ -3,8 +3,9 @@
 import traceback
 
 try:
-    from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-    from bloom_dnabert.classifier import BloomGuidedPipeline
+    from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+    from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+    from bloom_seq.pipeline import BloomGuidedPipeline
     import pandas as pd
     
     bloom = MultiScaleBloomFilter(capacity=100000, error_rate=0.001)

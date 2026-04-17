@@ -10,14 +10,20 @@ Thank you for helping improve this project. This document describes how to set u
    ```bash
    python -m venv .venv
    source .venv/bin/activate   # Windows: .venv\Scripts\activate
-   pip install -e ".[dev]"
+   pip install -e ".[dl,ui,dev]"
    ```
 
-   Alternatively, install runtime deps only:
+   Core-only editable install (no PyTorch / Gradio; enough for `tests/test_protocols.py` and `tests/test_registry.py`):
+
+   ```bash
+   pip install -e "."
+   ```
+
+   Alternatively, install the full pinned runtime stack from the requirements file:
 
    ```bash
    pip install -r requirements.txt
-   pip install pytest
+   pip install pytest pytest-cov
    ```
 
 3. **Training data** is not silently synthesized. Before running training or `test_system.py`, prepare data per [DATASETS.md](DATASETS.md), for example:
@@ -28,10 +34,24 @@ Thank you for helping improve this project. This document describes how to set u
 
    For unit tests, the suite mocks heavy dependencies and does not require full DNABERT weights. Some loader tests use synthetic data only when explicitly enabled via fixtures or `BLOOM_DNABERT_ALLOW_SYNTHETIC=1`.
 
+## Plugin development loop
+
+External or in-tree plugins register classes via `pyproject.toml` entry-point groups such as `bloom_seq.backbones` and `bloom_seq.pattern_indexes`. After `pip install -e .` in your plugin repo (or this repo), discovery goes through `bloom_seq.registry`. See [PLUGINS.md](PLUGINS.md) for contracts and examples.
+
 ## Running tests
 
+Full suite (requires `[dl]` and `[ui]` for integration tests):
+
 ```bash
+pip install -e ".[dl,ui,dev]"
 pytest tests/ -q
+```
+
+Core-only (no PyTorch / Gradio):
+
+```bash
+pip install -e "."
+pytest tests/test_protocols.py tests/test_registry.py -q
 ```
 
 Pytest is configured to collect only the `tests/` package. **Root-level smoke scripts** (see below) are not part of `pytest` and must be run manually.

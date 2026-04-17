@@ -17,7 +17,7 @@ import importlib.util  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "bloom_data_loader",
-    ROOT / "bloom_dnabert" / "data_loader.py",
+    ROOT / "bloom_seq" / "plugins" / "clinvar_hbb" / "source.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None

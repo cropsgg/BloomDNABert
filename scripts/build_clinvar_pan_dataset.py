@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bloom_dnabert.clinvar_pan import (  # noqa: E402
+from bloom_seq.plugins.clinvar_hbb.clinvar_pan import (  # noqa: E402
     CLINVAR_VARIANT_SUMMARY_GZ,
     download_variant_summary,
     reservoir_sample_clinvar_snvs,

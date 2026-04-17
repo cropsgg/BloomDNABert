@@ -12,8 +12,9 @@ import os
 if sys.platform == 'win32':
     os.system('chcp 65001 > nul')
 
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-from bloom_dnabert.data_loader import ClinVarDataLoader
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+from bloom_seq.plugins.clinvar_hbb.source import ClinVarDataLoader
 
 print("="*60)
 print("Testing Bloom-Enhanced DNABERT System")
@@ -63,7 +64,7 @@ except Exception as e:
 # Test 4: Visualizer
 print("\n4. Testing Visualizer...")
 try:
-    from bloom_dnabert import AttentionVisualizer
+    from bloom_seq.viz import AttentionVisualizer
     visualizer = AttentionVisualizer(dnabert, bloom_filter)
     
     test_seq = "CACGTGGTCTACCCCTGAGGAGAAGTCT"
@@ -79,7 +80,7 @@ except Exception as e:
 # Test 5: Classifier Pipeline
 print("\n5. Testing Classifier Pipeline...")
 try:
-    from bloom_dnabert.classifier import HybridClassifierPipeline
+    from bloom_seq.pipeline import HybridClassifierPipeline
     
     pipeline = HybridClassifierPipeline(bloom_filter, dnabert)
     

@@ -25,9 +25,16 @@ Then open your browser to: http://localhost:7860
 
 ### Option 2: Python API
 
+Install the full stack (PyTorch, transformers, UI) with:
+
+```bash
+pip install -e ".[dl,ui]"
+```
+
 ```python
-from bloom_dnabert import MultiScaleBloomFilter, DNABERTWrapper
-from bloom_dnabert.classifier import HybridClassifierPipeline
+from bloom_seq.plugins.multiscale_bloom import MultiScaleBloomFilter
+from bloom_seq.plugins.dnabert2.wrapper import DNABERTWrapper
+from bloom_seq.pipeline import HybridClassifierPipeline
 
 # Initialize
 bloom_filter = MultiScaleBloomFilter()
@@ -38,7 +45,7 @@ dnabert = DNABERTWrapper()
 pipeline = HybridClassifierPipeline(bloom_filter, dnabert)
 
 # Train (first time only)
-from bloom_dnabert.data_loader import ClinVarDataLoader
+from bloom_seq.plugins.clinvar_hbb.source import ClinVarDataLoader
 data_loader = ClinVarDataLoader()
 train_df, val_df, test_df = data_loader.get_training_data()
 
